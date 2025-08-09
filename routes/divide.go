@@ -8,13 +8,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func Add(c *gin.Context) {
+func Divide(c *gin.Context) {
 	aStr := c.Param("a")
 	bStr := c.Param("b")
 
 	if strings.TrimSpace(aStr) == "" || strings.TrimSpace(bStr) == "" {
 		c.IndentedJSON(http.StatusBadRequest, gin.H{
-			"Usage": "/add/number1/number2",
+			"Usage": "/divide/number1/number2",
 		})
 		return
 	}
@@ -22,7 +22,7 @@ func Add(c *gin.Context) {
 	a, err := strconv.Atoi(aStr)
 	if err != nil {
 		c.IndentedJSON(http.StatusBadRequest, gin.H{
-			"Usage": "/add/number1/number2",
+			"Usage": "/divide/number1/number2",
 			"error": err.Error(),
 		})
 		return
@@ -31,13 +31,13 @@ func Add(c *gin.Context) {
 	b, err := strconv.Atoi(bStr)
 	if err != nil {
 		c.IndentedJSON(http.StatusBadRequest, gin.H{
-			"Usage": "/add/number1/number2",
+			"Usage": "/divide/number1/number2",
 			"error": err.Error(),
 		})
 		return
 	}
 
 	c.IndentedJSON(http.StatusOK, gin.H{
-		"Result": a + b,
+		"Result": a / b,
 	})
 }
