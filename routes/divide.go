@@ -1,43 +1,20 @@
 package routes
 
 import (
-	"net/http"
-	"strconv"
-	"strings"
-
 	"github.com/gin-gonic/gin"
 )
 
 func Divide(c *gin.Context) {
-	aStr := c.Param("a")
-	bStr := c.Param("b")
-
-	if strings.TrimSpace(aStr) == "" || strings.TrimSpace(bStr) == "" {
-		c.IndentedJSON(http.StatusBadRequest, gin.H{
-			"Usage": "/divide/number1/number2",
-		})
-		return
-	}
-
-	a, err := strconv.Atoi(aStr)
+	a, b, err := parseTwo(c)
 	if err != nil {
-		c.IndentedJSON(http.StatusBadRequest, gin.H{
-			"Usage": "/divide/number1/number2",
-			"error": err.Error(),
-		})
+		c.IndentedJSON(400, gin.H{"error": err.Error(), "usage": "/function/number1/number2"})
 		return
 	}
 
-	b, err := strconv.Atoi(bStr)
-	if err != nil {
-		c.IndentedJSON(http.StatusBadRequest, gin.H{
-			"Usage": "/divide/number1/number2",
-			"error": err.Error(),
-		})
-		return
+	if b == 0 {
+		c.IndentedJSON(400, gin.H{"error": "Divided by zero"})
 	}
 
-	c.IndentedJSON(http.StatusOK, gin.H{
-		"Result": a / b,
-	})
+	respond(c, "divide", a, b, a/b)
+
 }

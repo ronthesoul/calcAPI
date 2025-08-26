@@ -1,43 +1,13 @@
+// routes/add.go
 package routes
 
-import (
-	"net/http"
-	"strconv"
-	"strings"
-
-	"github.com/gin-gonic/gin"
-)
+import "github.com/gin-gonic/gin"
 
 func Add(c *gin.Context) {
-	aStr := c.Param("a")
-	bStr := c.Param("b")
-
-	if strings.TrimSpace(aStr) == "" || strings.TrimSpace(bStr) == "" {
-		c.IndentedJSON(http.StatusBadRequest, gin.H{
-			"Usage": "/add/number1/number2",
-		})
-		return
-	}
-
-	a, err := strconv.Atoi(aStr)
+	a, b, err := parseTwo(c)
 	if err != nil {
-		c.IndentedJSON(http.StatusBadRequest, gin.H{
-			"Usage": "/add/number1/number2",
-			"error": err.Error(),
-		})
+		c.IndentedJSON(400, gin.H{"error": err.Error(), "usage": "/add/number1/number2"})
 		return
 	}
-
-	b, err := strconv.Atoi(bStr)
-	if err != nil {
-		c.IndentedJSON(http.StatusBadRequest, gin.H{
-			"Usage": "/add/number1/number2",
-			"error": err.Error(),
-		})
-		return
-	}
-
-	c.IndentedJSON(http.StatusOK, gin.H{
-		"Result": a + b,
-	})
+	respond(c, "add", a, b, a+b)
 }
