@@ -34,5 +34,6 @@ func main() {
 	r.GET("/multiply/:a/:b", routes.Multiply)
 	r.GET("/divide/:a/:b", routes.Add)
 	r.GET("/token", routes.Apigen)
+	r.GET("/health", routes.HealthCheck)
 	r.Run("localhost:8080")
 }
