@@ -27,7 +27,7 @@ func main() {
 		}
 	}()
 
-	r.Use(mw.APIKeyAuth(), mw.SecurityHeaders(), mw.CORS())
+	r.Use(mw.APIKeyAuth(), mw.SecurityHeaders(), mw.CORS(), mw.RateLimitPerIP(5, 15))
 
 	r.GET("/add/:a/:b", routes.Add)
 	r.GET("/sub/:a/:b", routes.Sub)
