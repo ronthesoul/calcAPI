@@ -6,7 +6,9 @@ import (
 
 func SecurityHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Header("RequestIDKey", "requestid.HeaderXRequestID")
+		if rid := c.GetString("X-Request-Id"); rid != "" {
+			c.Header("X-Request-Id", rid)
+		}
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
 		c.Header("X-XSS-Protection", "0")
