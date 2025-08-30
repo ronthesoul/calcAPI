@@ -14,14 +14,11 @@ func Apigen(c *gin.Context) {
 		"ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
 		"0123456789"
 
-	rand.Seed(time.Now().UnixNano())
 	apikey := make([]byte, apilen)
-
 	for i := 0; i < apilen; i++ {
 		apikey[i] = chars[rand.Intn(len(chars))]
 	}
 
-	// save key with 5 minute TTL
 	if err := s.AppendKey(string(apikey), 5*time.Minute); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
