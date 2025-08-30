@@ -209,8 +209,7 @@ jobs:
 
   autofix:
     needs: build
-    # run only if build failed; and only for push or same-repo PRs (secrets available)
-    if: ${{ needs.build.result == 'failure' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+    if: ${{ always() && needs.build.result == 'failure' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
