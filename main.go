@@ -16,7 +16,8 @@ import (
 
 func main() {
 	r := gin.New()
-	x := 1
+	x := 2
+
 	zl, err := l.NewLogger()
 	if err != nil {
 		panic(err)
@@ -50,5 +51,3 @@ func main() {
 		zl.Fatal("server failed to start", zap.Error(err))
 	}
 }
-
-/* */
