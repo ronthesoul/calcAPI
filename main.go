@@ -44,5 +44,5 @@ func main() {
 	r.GET("/divide/:a/:b", routes.Add)
 	r.GET("/token", routes.Apigen)
 	r.GET("/health", routes.HealthCheck)
-	r.Run("localhost:8080")
+	r.Run(":8080")
 }
