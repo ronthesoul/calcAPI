@@ -30,21 +30,35 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.24.6'
+          cache: true   # caches Go modules automatically
 
       - name: Notify Start
         run: |
           chmod +x "$NOTIFY"
           "$NOTIFY" ":bell: Starting ${{ github.event.repository.name }} CI - Run (#$GITHUB_RUN_NUMBER) Commit: ${{ github.event.head_commit.message }} :bell:" "$SLACK_WEBHOOK"
 
+      - name: Cache golangci-lint binary
+        id: lintcache
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin/golangci-lint
+          key: ${{ runner.os }}-golangci-${{ hashFiles('.golangci.version') }}
+
       - name: Install dependencies
+        shell: bash
         run: |
           sudo apt-get update -y && sudo apt-get install -y jq
           go mod tidy
           go mod download
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.63.4
-          "$NOTIFY" "Step - Dependencies installed" "$SLACK_WEBHOOK"
+
+          if [ "${{ steps.lintcache.outputs.cache-hit }}" != "true" ]; then
+            # Pin the version in a repo file named exactly ".golangci.version", e.g., contains: v1.63.4
+            GOLANGCI_VERSION=$(cat .golangci.version)
+            go install github.com/golangci/golangci-lint/cmd/golangci-lint@${GOLANGCI_VERSION}
+          fi
 
       - name: Run golangci-lint
+        shell: bash
         run: |
           set +e
           "$NOTIFY" "Starting Step - Lint" "$SLACK_WEBHOOK"
