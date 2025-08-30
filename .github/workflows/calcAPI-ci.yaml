@@ -216,8 +216,7 @@ jobs:
       pull-requests: write
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_MODEL: 'gemini-2.5-flash'
-
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -226,11 +225,6 @@ jobs:
 
       - name: Install tools
         run: sudo apt-get update -y && sudo apt-get install -y jq
-
-      - name: Set up Go (for optional verify build)
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.23.x"
 
       - name: Restore CI logs
         uses: actions/cache/restore@v4
@@ -249,13 +243,8 @@ jobs:
             echo " - Only change files in this repo."
             echo " - Keep code style consistent."
             echo " - Ensure /health returns {\"status\":\"ok\"}."
-            echo " - Use: defer func(){ _ = zl.Sync() }() for zap."
-            echo "Output format: ONLY a fenced diff block like:"
-            echo '```diff'
-            echo '--- a/path'
-            echo '+++ b/path'
-            echo '@@ ...'
-            echo '```'
+            echo " - Use defer func(){ _ = zl.Sync() }() for zap."
+            echo "Output format: ONLY a fenced diff block containing a unified diff."
             echo
             echo "=== LINT ===";  cat artifacts/lint.log  2>/dev/null || true;  echo
             echo "=== BUILD ==="; cat artifacts/build.log 2>/dev/null || true;  echo
@@ -266,18 +255,16 @@ jobs:
           wc -c prompt.txt || true
 
       - name: Call Gemini for patch
+        id: gen
         shell: bash
         env:
           LANG: C.UTF-8
         run: |
-          KEY=$(printf "%s" "$GEMINI_API_KEY" | tr -d '\r\n ')
-          MODEL=$(printf "%s" "$GEMINI_MODEL"     | tr -d '\r\n ')
-
-          if [ -z "$KEY" ]; then
-            echo "GEMINI_API_KEY not set; skipping autofix."
-            exit 0
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "GEMINI_API_KEY not set; skipping autofix."; exit 0
           fi
-
+          KEY=$(printf "%s" "$GEMINI_API_KEY" | tr -d '\r\n ')
+          MODEL=$(printf "%s" "$GEMINI_MODEL" | tr -d '\r\n ')
           BODY=$(jq -Rs '{contents:[{role:"user",parts:[{text:.}]}]}' < prompt.txt)
 
           curl -sS "https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent" \
@@ -286,71 +273,57 @@ jobs:
             -d "$BODY" > gemini_resp.json
 
           jq -r '[.candidates[]?.content.parts[]?.text // empty] | join("\n")' gemini_resp.json > ai_text.txt
+          awk '/^```(diff|patch)/{f=1;next} /^```/{if(f){f=0;next}} f' ai_text.txt > changes.patch || true
 
-          # Extract fenced diff block (```diff ... ```)
-          awk '/^```(diff|patch)/{f=1;next} /^```/{if(f){f=0;next}} f' ai_text.txt > changes.patch
-
-          if [ ! -s changes.patch ]; then
-            echo "No patch extracted from model output. Continuing without a code patch."
-            echo "patch_applied=false" >> $GITHUB_ENV
-            exit 0
+          if [ -s changes.patch ]; then
+            echo "patch_present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No patch extracted."
+            echo "patch_present=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "patch_applied=true" >> $GITHUB_ENV
-          echo "Extracted patch (first 200 lines):"
-          sed -n '1,200p' changes.patch
 
-      - name: Apply patch & verify (NO commit)
+      - name: Apply patch & verify
         id: apply
+        if: steps.gen.outputs.patch_present == 'true'
         shell: bash
         run: |
-            changed=false
-            if [ -s changes.patch ] && git apply --whitespace=fix changes.patch; then
-            changed=true
-            fi
-            go mod tidy || true
-            go build ./... || true
-            echo "code_changed=$changed" >> $GITHUB_OUTPUT
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Upload autofix artifacts (not committed)
-        uses: actions/upload-artifact@v4
-        with:
-          name: autofix-${{ github.run_id }}
-          path: |
-            ai_text.txt
-            changes.patch
-            gemini_resp.json
-            prompt.txt
-            artifacts/**
-          if-no-files-found: ignore
+          # Apply patch (index to stage changes), ignore whitespace noise
+          if ! git apply --index --whitespace=fix -p0 changes.patch; then
+            echo "code_changed=false" >> "$GITHUB_OUTPUT"
+            echo "Patch did not apply cleanly."; exit 0
+          fi
+
+          # Build check (non-blocking)
+          go mod tidy || true
+          go build ./... || true
+
+          echo "code_changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Create Auto-Fix PR
-        id: cpr
-        if: always() && steps.apply.outputs.code_changed == 'true'
+        if: steps.apply.outputs.code_changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${{ secrets.GH_TOKEN }}                 # PAT with repo permissions
-          branch: auto-fix/${{ github.run_id }}          # head branch name
-          base: ${{ github.base_ref || github.event.repository.default_branch }}
-          commit-message: "Auto-fix: include generated changes"
+          token: ${{ secrets.GH_TOKEN }}  # PAT with repo scope (fine-grained: contents & PRs RW)
+          branch: auto-fix/${{ github.run_id }}
+          base: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+          commit-message: "Auto-fix: apply model-suggested changes"
           title: "Auto-fix: CI failures"
           body: |
             PR opened automatically after CI failed.
-            Edits by `${{ env.GEMINI_MODEL }}`.
-            (AI output & logs are attached to the workflow run as artifacts.)
-          add-paths: |                                   # ONLY commit code files
+            Edits generated by Google Gemini model `${{ env.GEMINI_MODEL }}`.
+            (Logs were passed between jobs via Actions cache.)
+          add-paths: |
             **/*.go
             go.mod
             go.sum
+            .golangci.yml
+            .github/**/*
           author: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
           committer: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
           labels: |
             ci
             auto-fix
           delete-branch: true
-
-
-
-
-
-
-
