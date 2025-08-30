@@ -1,0 +1,26 @@
+You are an expert Go developer and CI engineer.
+Task: Read the CI logs (lint/test/build/docker) and return a SINGLE unified diff patch that fixes issues with minimal changes.
+Constraints:
+ - Only change files in this repo.
+ - Keep code style consistent.
+ - Ensure /health returns {"status":"ok"}.
+ - Use defer func(){ _ = zl.Sync() }() for zap.
+Output format: ONLY a fenced diff block:
+```diff
+--- a/path
++++ b/path
+@@ ...
+```
+
+=== LINT ===
+main.go:1: : # calcAPI
+./main.go:19:2: declared and not used: x (typecheck)
+package main
+
+=== BUILD ===
+
+=== TEST ===
+
+=== DOCKER BUILD ===
+
+=== HEALTH ===

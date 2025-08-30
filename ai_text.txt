@@ -1,0 +1,72 @@
+```diff
+--- a/main.go
++++ b/main.go
+@@ -1,25 +1,55 @@
+-# calcAPI
+ package main
+ 
+ import (
++	"encoding/json"
+ 	"fmt"
+-	"log"
+ 	"net/http"
++
++	"go.uber.org/zap"
+ )
+ 
++var zl *zap.Logger
++
+ func main() {
+-	fmt.Println("Starting server...")
+-	// These lines are just to push `x` to line 19
+-	// Line 12
+-	// Line 13
+-	// Line 14
+-	// Line 15
+-	// Line 16
+-	// Line 17
+-	// Line 18
+-	var x int // Line 19: declared and not used: x
++	var err error
++	zl, err = zap.NewProduction()
++	if err != nil {
++		// If zap init fails, we cannot use zl, so panic or use standard log.
++		// Panic is acceptable for a critical logger initialization failure.
++		panic(fmt.Sprintf("failed to initialize zap logger: %v", err))
++	}
++	defer func() {
++		// Ensure Sync() is called only once and only if zl is initialized.
++		// Sync() flushes any buffered log entries.
++		if zl != nil {
++			_ = zl.Sync()
++		}
++	}()
++
++	http.HandleFunc("/health", healthHandler)
+ 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
++		// Replaced fmt.Println and added logging for requests
++		zl.Info("Received request for root path", zap.String("method", r.Method), zap.String("path", r.URL.Path))
+ 		fmt.Fprintf(w, "Hello World!")
+ 	})
+-	log.Fatal(http.ListenAndServe(":8080", nil))
++
++	port := "8080"
++	zl.Info(fmt.Sprintf("Server starting on port %s", port))
++	if err := http.ListenAndServe(":"+port, nil); err != nil {
++		// Replaced log.Fatal with zl.Fatal
++		zl.Fatal("Server failed to start", zap.Error(err))
++	}
+ }
++
++func healthHandler(w http.ResponseWriter, r *http.Request) {
++	w.Header().Set("Content-Type", "application/json")
++	w.WriteHeader(http.StatusOK)
++	response := map[string]string{"status": "ok"}
++	if err := json.NewEncoder(w).Encode(response); err != nil {
++		// Log the error with zap
++		zl.Error("Failed to encode health response", zap.Error(err))
++		// Provide a generic error message to the client on internal issues
++		http.Error(w, `{"error": "internal server error"}`, http.StatusInternalServerError)
++	}
++}
+```
