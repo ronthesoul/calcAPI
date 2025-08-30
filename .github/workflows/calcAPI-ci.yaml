@@ -300,20 +300,16 @@ jobs:
           sed -n '1,200p' changes.patch
 
       - name: Apply patch & verify (NO commit)
+        id: apply
         shell: bash
         run: |
-          if [ "${patch_applied:-false}" != "true" ]; then
-            exit 0
-          fi
-
-          # Apply to working tree only; leave changes for PR action
-          if ! git apply --whitespace=fix changes.patch; then
-            echo "Patch did not apply cleanly; will still open PR with any partial changes."
-          fi
-
-          # Optional sanity build; do not fail this job
-          go mod tidy || true
-          go build ./... || true
+            changed=false
+            if [ -s changes.patch ] && git apply --whitespace=fix changes.patch; then
+            changed=true
+            fi
+            go mod tidy || true
+            go build ./... || true
+            echo "code_changed=$changed" >> $GITHUB_OUTPUT
 
       - name: Upload autofix artifacts (not committed)
         uses: actions/upload-artifact@v4
@@ -329,7 +325,7 @@ jobs:
 
       - name: Create Auto-Fix PR
         id: cpr
-        if: always()
+        if: always() && steps.apply.outputs.code_changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GH_TOKEN }}                 # PAT with repo permissions
