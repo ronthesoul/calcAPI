@@ -312,7 +312,7 @@ jobs:
 
       - name: Open PR
         env:
-            GH_TOKEN: ${{ secrets.GH_TOKEN }}          # your PAT name
+            GH_TOKEN: ${{ secrets.GH_TOKEN }}     # your PAT
             REPO: ${{ github.repository }}
             BASE_REF: ${{ github.event.pull_request.base.ref }}
             DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
@@ -323,26 +323,19 @@ jobs:
         run: |
             set -Eeuo pipefail
 
-            # Use PAT for both gh and git (no token in URL)
-            echo "$GH_TOKEN" | gh auth login --with-token
-            gh repo set-default "$REPO"
-            gh auth setup-git
-            # Remove checkout's Authorization extraheader so PAT is used
-            git config --global --unset-all http.https://github.com/.extraheader || true
-
             git config user.name  "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
             BASE="${BASE_REF:-${DEFAULT_BRANCH:-main}}"
 
-            # Detect branch across push/PR events; handle detached HEAD
+            # detect current branch across events; handle detached HEAD
             HEAD_BRANCH="${HEAD_REF:-${REF_NAME:-}}"
             if [ -z "$HEAD_BRANCH" ] || [ "$HEAD_BRANCH" = "HEAD" ]; then
             HEAD_BRANCH="$(git rev-parse --abbrev-ref HEAD || true)"
             fi
             [ -z "$HEAD_BRANCH" ] && HEAD_BRANCH="$BASE"
 
-            # If head==base, create a temp branch to avoid "No commits between main and main"
+            # if head==base, create a temp branch to avoid "No commits between ... "
             if [ "$HEAD_BRANCH" = "$BASE" ]; then
             HEAD_BRANCH="auto-fix/${RUN_ID}"
             git switch -c "$HEAD_BRANCH" "origin/$BASE" || git switch -c "$HEAD_BRANCH" "$BASE"
@@ -353,11 +346,12 @@ jobs:
             git commit -m "Auto-fix: include generated changes"
             fi
 
+            # push using the credentials injected by actions/checkout (must pass token there)
             git push -u origin "$HEAD_BRANCH"
 
-            # Create PR (idempotent)
-            if ! gh pr list --head "$HEAD_BRANCH" --base "$BASE" --state open --json number --jq 'length>0'; then
-            gh pr create --base "$BASE" --head "$HEAD_BRANCH" \
+            # create PR (gh will auto-use GH_TOKEN from env)
+            if ! gh pr list --repo "$REPO" --head "$HEAD_BRANCH" --base "$BASE" --state open --json number --jq 'length>0'; then
+            gh pr create --repo "$REPO" --base "$BASE" --head "$HEAD_BRANCH" \
                 --title "Auto-fix: CI failures" \
                 --body "PR opened automatically after CI failed. Edits by \`${GEMINI_MODEL}\`."
             else
