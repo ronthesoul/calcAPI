@@ -50,5 +50,3 @@ func main() {
 		zl.Fatal("server failed to start", zap.Error(err))
 	}
 }
-
-/* */

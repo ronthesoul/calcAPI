@@ -20,7 +20,7 @@ jobs:
     env:
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
       NOTIFY: .github/workflows/notify.sh
-      IMAGE: m4gapower/calcAPI
+      IMAGE: m4gapower/calcapi
     steps:
       - uses: actions/checkout@v4
         with:
