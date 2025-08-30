@@ -1,0 +1,185 @@
+name: calcAPI-ci.yaml
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - '**.go'
+      - go.sum
+      - go.mod
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - '**.go'
+      - go.sum
+      - go.mod
+
+jobs: 
+  build:
+    runs-on: ubuntu-latest
+    env:
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      NOTIFY: ".github/workflows/notify.sh"
+      IMAGE: m4gapower/calcAPI
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+
+      - name: Notify Start
+        run: |
+          chmod +x $NOTIFY
+          "$NOTIFY" ":bell: Starting ${{ github.event.repository.name }} CI - Run number: (#$GITHUB_RUN_NUMBER) Commit: ${{ github.event.head_commit.message }} :bell:" "$SLACK_WEBHOOK"
+
+
+      - name: Install dependencies
+        run: |
+          go mod tidy
+          go mod download
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.63.4
+          $NOTIFY "Step - Dependencies installed" $SLACK_WEBHOOK
+
+      - name: Run golangci-lint
+        run: |
+          set +e
+          $NOTIFY "Starting Step - Lint" $SLACK_WEBHOOK
+          golangci-lint run > lint.log 2>&1
+          STATUS=$?
+          OUTPUT=$(cat lint.log | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+          rm lint.log
+
+          if [[ $STATUS -eq 0 ]]; then
+            $NOTIFY "Step - Lint ✅ Success" $SLACK_WEBHOOK
+          else
+            $NOTIFY "Step - Lint ❌ Failed:\n\`\`\`$OUTPUT\`\`\`" $SLACK_WEBHOOK
+            exit 1
+          fi
+          
+      - name: Early Build
+        run: |
+          set +e
+          $NOTIFY "Starting Step - Early Build" $SLACK_WEBHOOK
+          go build -v ./... > build.log 2>&1
+          STATUS=$?
+          OUTPUT=$(cat build.log)
+          rm build.log
+
+          if [[ $STATUS -eq 0 ]]; then
+            $NOTIFY "Step - Early Build ✅ Success" $SLACK_WEBHOOK
+          else
+            $NOTIFY "Step - Early Build ❌ Failed \n\`\`\`$OUTPUT\`\`\`" $SLACK_WEBHOOK
+            exit 1
+          fi
+
+      - name: Test
+        run: |
+          set +e
+          $NOTIFY "Starting Step - Test" "$SLACK_WEBHOOK"
+          go test -v ./... > build.log 2>&1
+          STATUS=$?
+          OUTPUT=$(cat build.log | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+          rm build.log
+
+          if [[ $STATUS -eq 0 ]]; then
+            $NOTIFY "Step - Test ✅ Success" "$SLACK_WEBHOOK"
+          else
+            $NOTIFY "Step - Test ❌ Failed:\n\`\`\`$OUTPUT\`\`\`" "$SLACK_WEBHOOK"
+            exit 1
+          fi
+
+             - name: Build Docker image
+            run: |
+          "$NOTIFY" "🐳 Starting Step - Build Docker image" "$SLACK_WEBHOOK"
+          if docker build -t "$IMAGE:latest" .; then
+            "$NOTIFY" "Step - Build Docker image ✅ Success" "$SLACK_WEBHOOK"
+          else
+            "$NOTIFY" "Step - Build Docker image ❌ Failed" "$SLACK_WEBHOOK"
+            exit 1
+          fi
+
+      - name: Run & Test container
+        run: |
+          "$NOTIFY" "🧪 Starting Step - Run & Test container" "$SLACK_WEBHOOK"
+          docker run -d --rm -p 8000:8000 --name my_app_test "$IMAGE:latest"
+          sleep 5
+          if curl -fsS http://localhost:8000/ > /dev/null; then
+            "$NOTIFY" "Step - Run & Test container ✅ Success (responded on :8000)" "$SLACK_WEBHOOK"
+            docker stop my_app_test
+          else
+            "$NOTIFY" "Step - Run & Test container ❌ Failed (no response on :8000)" "$SLACK_WEBHOOK"
+            docker logs my_app_test || true
+            docker stop my_app_test
+            exit 1
+          fi
+
+      - name: Compute next SemVer MINOR tag
+        run: |
+          "$NOTIFY" "🔢 Starting Step - Compute next SemVer MINOR tag" "$SLACK_WEBHOOK"
+          # pull up to 100 tags; keep only x.y.z; sort numerically; pick highest
+          LATEST_SEMVER=$(
+            curl -s "https://hub.docker.com/v2/repositories/$IMAGE/tags/?page_size=100" \
+            | jq -r '[.results[].name
+                      | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))]
+                      | sort_by(split(".")|map(tonumber))
+                      | last // empty'
+          )
+          if [ -z "$LATEST_SEMVER" ]; then
+            BASE="1.0.0"
+          else
+            BASE="$LATEST_SEMVER"
+          fi
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
+          NEW_TAG="${MAJOR}.$((MINOR+1)).0"
+          echo "new_tag=$NEW_TAG" >> "$GITHUB_ENV"
+          "$NOTIFY" "Step - Compute tag ✅ $BASE → $NEW_TAG" "$SLACK_WEBHOOK"
+
+
+
+
+      - name: Tag image with NEW_TAG
+        run: |
+          "$NOTIFY" "🏷️ Starting Step - Tag image as ${IMAGE}:${new_tag}" "$SLACK_WEBHOOK"
+          if docker tag "$IMAGE:latest" "$IMAGE:${new_tag}"; then
+            "$NOTIFY" "Step - Tag image ✅ ${IMAGE}:${new_tag}" "$SLACK_WEBHOOK"
+          else
+            "$NOTIFY" "Step - Tag image ❌ Failed" "$SLACK_WEBHOOK"; exit 1
+          fi
+
+      - name: Push image(s)
+        run: |
+          "$NOTIFY" "📤 Starting Step - Push image(s)" "$SLACK_WEBHOOK"
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+          if docker push "$IMAGE:latest" && docker push "$IMAGE:${new_tag}"; then
+            "$NOTIFY" "Step - Push image(s) ✅ $IMAGE:latest & $IMAGE:${new_tag}" "$SLACK_WEBHOOK"
+          else
+            "$NOTIFY" "Step - Push image(s) ❌ Failed" "$SLACK_WEBHOOK"; exit 1
+          fi
+
+
+
+      - name: Show changed files (logs) + notify
+        run: |
+          COMPARE="https://github.com/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.sha }}"
+          CHANGES="$(git diff --name-status ${{ github.event.before }} ${{ github.sha }})"
+          echo "Compare: $COMPARE"
+          echo "$CHANGES"
+
+          MSG=$'Changes in this push:\n'"$COMPARE"$'\n\n'"$CHANGES"
+          "$NOTIFY" "$MSG" "$SLACK_WEBHOOK"  
+
+
+      - name: Final pipeline result
+        if: success()
+        run: |
+            $NOTIFY "🚀 Pipeline completed successfully!" $SLACK_WEBHOOK
+
+      - name: Final pipeline failure
+        if: failure()
+        run: |
+            $NOTIFY "🔥 Pipeline failed!" $SLACK_WEBHOOK
+
+
+
+        
