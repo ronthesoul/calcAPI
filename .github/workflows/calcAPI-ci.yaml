@@ -216,7 +216,8 @@ jobs:
       pull-requests: write
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
+      GEMINI_MODEL: 'gemini-2.5-flash'
+
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -225,6 +226,11 @@ jobs:
 
       - name: Install tools
         run: sudo apt-get update -y && sudo apt-get install -y jq
+
+      - name: Set up Go (for optional verify build)
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
 
       - name: Restore CI logs
         uses: actions/cache/restore@v4
@@ -243,8 +249,8 @@ jobs:
             echo " - Only change files in this repo."
             echo " - Keep code style consistent."
             echo " - Ensure /health returns {\"status\":\"ok\"}."
-            echo " - Use defer func(){ _ = zl.Sync() }() for zap."
-            echo "Output format: ONLY a fenced diff block:"
+            echo " - Use: defer func(){ _ = zl.Sync() }() for zap."
+            echo "Output format: ONLY a fenced diff block like:"
             echo '```diff'
             echo '--- a/path'
             echo '+++ b/path'
@@ -262,75 +268,89 @@ jobs:
       - name: Call Gemini for patch
         shell: bash
         env:
-            LANG: C.UTF-8
+          LANG: C.UTF-8
         run: |
-            # Trim any CR/LF/space from secrets/vars
-            KEY=$(printf "%s" "$GEMINI_API_KEY" | tr -d '\r\n ')
-            MODEL=$(printf "%s" "$GEMINI_MODEL"     | tr -d '\r\n ')
+          KEY=$(printf "%s" "$GEMINI_API_KEY" | tr -d '\r\n ')
+          MODEL=$(printf "%s" "$GEMINI_MODEL"     | tr -d '\r\n ')
 
-            if [ -z "$KEY" ]; then
+          if [ -z "$KEY" ]; then
             echo "GEMINI_API_KEY not set; skipping autofix."
             exit 0
-            fi
+          fi
 
-            BODY=$(jq -Rs '{contents:[{role:"user",parts:[{text:.}]}]}' < prompt.txt)
+          BODY=$(jq -Rs '{contents:[{role:"user",parts:[{text:.}]}]}' < prompt.txt)
 
-            # Use header for API key (avoids URL issues)
-            curl -sS "https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent" \
+          curl -sS "https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent" \
             -H "Content-Type: application/json" \
             -H "x-goog-api-key: ${KEY}" \
             -d "$BODY" > gemini_resp.json
 
-            jq -r '[.candidates[]?.content.parts[]?.text // empty] | join("\n")' gemini_resp.json > ai_text.txt
-            awk '/^```(diff|patch)/{f=1;next} /^```/{if(f){f=0;next}} f' ai_text.txt > changes.patch
-            if [ ! -s changes.patch ]; then
-            echo "No patch extracted from model output. Exiting."
-            sed -n '1,120p' ai_text.txt
-            exit 0
-            fi
-            echo "Extracted patch:"; sed -n '1,200p' changes.patch
+          jq -r '[.candidates[]?.content.parts[]?.text // empty] | join("\n")' gemini_resp.json > ai_text.txt
 
-      - name: Apply patch & verify
+          # Extract fenced diff block (```diff ... ```)
+          awk '/^```(diff|patch)/{f=1;next} /^```/{if(f){f=0;next}} f' ai_text.txt > changes.patch
+
+          if [ ! -s changes.patch ]; then
+            echo "No patch extracted from model output. Continuing without a code patch."
+            echo "patch_applied=false" >> $GITHUB_ENV
+            exit 0
+          fi
+          echo "patch_applied=true" >> $GITHUB_ENV
+          echo "Extracted patch (first 200 lines):"
+          sed -n '1,200p' changes.patch
+
+      - name: Apply patch & verify (NO commit)
         shell: bash
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          if ! git apply -p0 --whitespace=fix changes.patch; then
-            echo "Patch did not apply cleanly."; exit 0
+          if [ "${patch_applied:-false}" != "true" ]; then
+            exit 0
           fi
-          echo "Patch applied. Building..."
-          go version || true
-          go mod tidy
-          if ! go build ./...; then
-            echo "Build still failing after patch; keeping branch for review."
+
+          # Apply to working tree only; leave changes for PR action
+          if ! git apply --whitespace=fix changes.patch; then
+            echo "Patch did not apply cleanly; will still open PR with any partial changes."
           fi
-          BRANCH="autofix/${GITHUB_SHA::7}"
-          git checkout -b "$BRANCH"
-          git add -A
-          git commit -m "Auto-fix CI failures via Gemini"
-          git push -u origin "$BRANCH"
+
+          # Optional sanity build; do not fail this job
+          go mod tidy || true
+          go build ./... || true
+
+      - name: Upload autofix artifacts (not committed)
+        uses: actions/upload-artifact@v4
+        with:
+          name: autofix-${{ github.run_id }}
+          path: |
+            ai_text.txt
+            changes.patch
+            gemini_resp.json
+            prompt.txt
+            artifacts/**
+          if-no-files-found: ignore
 
       - name: Create Auto-Fix PR
         id: cpr
         if: always()
         uses: peter-evans/create-pull-request@v6
-        env:
-            GEMINI_MODEL: gemini-2.5-flash
         with:
-            token: ${{ secrets.GH_TOKEN }}
-            branch: auto-fix/${{ github.run_id }}
-            base: ${{ github.base_ref || github.event.repository.default_branch }}
-            commit-message: "Auto-fix: include generated changes"
-            title: "Auto-fix: CI failures"
-            body: |
-              PR opened automatically after CI failed.
-              Edits by `${{ env.GEMINI_MODEL }}`.
-            author: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
-            committer: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
-            labels: |
-              ci
-              auto-fix
-            delete-branch: true
+          token: ${{ secrets.GH_TOKEN }}                 # PAT with repo permissions
+          branch: auto-fix/${{ github.run_id }}          # head branch name
+          base: ${{ github.base_ref || github.event.repository.default_branch }}
+          commit-message: "Auto-fix: include generated changes"
+          title: "Auto-fix: CI failures"
+          body: |
+            PR opened automatically after CI failed.
+            Edits by `${{ env.GEMINI_MODEL }}`.
+            (AI output & logs are attached to the workflow run as artifacts.)
+          add-paths: |                                   # ONLY commit code files
+            **/*.go
+            go.mod
+            go.sum
+          author: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+          committer: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+          labels: |
+            ci
+            auto-fix
+          delete-branch: true
 
 
 
