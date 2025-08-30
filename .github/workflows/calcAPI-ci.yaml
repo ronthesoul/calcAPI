@@ -35,6 +35,7 @@ jobs:
       - name: Notify Start
         run: |
           chmod +x "$NOTIFY"
+          echo v1.63.4 > .golangci.version
           "$NOTIFY" ":bell: Starting ${{ github.event.repository.name }} CI - Run (#$GITHUB_RUN_NUMBER) Commit: ${{ github.event.head_commit.message }} :bell:" "$SLACK_WEBHOOK"
 
       - name: Cache golangci-lint binary
