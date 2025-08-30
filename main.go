@@ -16,7 +16,7 @@ import (
 
 func main() {
 	r := gin.New()
-
+	x := 1
 	zl, err := l.NewLogger()
 	if err != nil {
 		panic(err)
