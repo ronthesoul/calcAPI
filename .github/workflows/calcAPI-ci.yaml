@@ -312,11 +312,11 @@ jobs:
 
       - name: Open PR
         env:
-            GH_TOKEN: ${{ secrets.GH_TOKEN }}      
-            GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}  
+            GH_TOKEN: ${{ secrets.GH_PAT }}  
+            GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-            : "${BRANCH:?set earlier with: echo BRANCH=... >> $GITHUB_ENV}"
-            BASE="${{ github.event.pull_request.base.ref || github.ref_name }}"
+            BRANCH="${BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
+            BASE="${{ github.event.pull_request.base.ref || 'main' }}"
             git add -A
             git commit -m "Auto-fix: include generated changes" --allow-empty
             gh pr create --repo "${{ github.repository }}" --base "$BASE" --head "$BRANCH" \
