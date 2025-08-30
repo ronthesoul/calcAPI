@@ -287,52 +287,53 @@ jobs:
         if: steps.gen.outputs.patch_present == 'true'
         shell: bash
         run: |
-            git config user.name "github-actions[bot]"
+            set -e
+            git config user.name  "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
 
-            # Sanitize model output
-            sed -i 's/\r$//' changes.patch                       # strip CRLF
+            # Normalize line endings and strip any prose/fences
+            sed -i 's/\r$//' changes.patch
             awk '/^```/ {next} {print}' changes.patch > patch.clean
-            # If the model added prose before the diff, trim to first diff header
-            awk 'BEGIN{s=0} /^diff --git|^--- /{s=1} s{print}' patch.clean > patch.try || cp patch.clean patch.try
 
-            # Try multiple strategies
-            if git apply --index --whitespace=fix -p0 patch.try \
-            || git apply --index --whitespace=fix -p1 patch.try \
-            || git apply --reject --whitespace=fix -p0 patch.try; then
-            echo "Applied (fully or partially)."
-            # If .rej files exist, include them for review
-            if ls -1 **/*.rej >/dev/null 2>&1; then git add -A; fi
-            # Best-effort build check (non-blocking)
-            go mod tidy || true
-            go build ./... || true
-            echo "code_changed=true" >> "$GITHUB_OUTPUT"
+            # Keep only proper unified-diff lines
+            awk '/^(diff --git|index [0-9a-f]+\.\.[0-9a-f]+|--- |\\+\\+\\+ |@@ |\\+|-| )/ {print}' patch.clean > patch.try || true
+
+            # Validate without touching the index
+            if git apply --check -p0 patch.try || git apply --check -p1 patch.try; then
+            # Apply (stage changes)
+            git apply --index -p0 patch.try 2>/dev/null || git apply --index -p1 patch.try
+            else
+            echo "Patch failed validation; no PR will be opened."
+            echo "code_changed=false" >> "$GITHUB_OUTPUT"
             exit 0
             fi
 
-            echo "Patch did not apply cleanly; commit the patch for manual review."
-            mkdir -p .autofix
-            cp changes.patch .autofix/changes.patch
-            git add .autofix/changes.patch
+            # Optional sanity: build but don't fail the job if it still breaks
+            go mod tidy || true
+            go build ./... || true
+
+            # Did we stage any code files?
+            if git diff --cached --quiet; then
+            echo "No staged changes after applying patch."
+            echo "code_changed=false" >> "$GITHUB_OUTPUT"
+            else
             echo "code_changed=true" >> "$GITHUB_OUTPUT"
+            fi
 
       - name: Create Auto-Fix PR
         if: steps.apply.outputs.code_changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
-            token: ${{ secrets.GH_TOKEN }}  # PAT with repo scope
+            token: ${{ secrets.GH_TOKEN }}   # PAT with repo (or fine-grained: contents & PRs RW)
             branch: auto-fix/${{ github.run_id }}
             base: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
-            commit-message: "Auto-fix: apply model-suggested changes (or attach patch)"
+            commit-message: "Auto-fix: apply model-suggested changes"
             title: "Auto-fix: CI failures"
             body: |
-                CI failed; an automatic patch from `${{ env.GEMINI_MODEL }}` was applied where possible.
-                If hunks didn’t apply, see `.autofix/changes.patch` and any `*.rej` files.
+                CI failed; a patch from `${{ env.GEMINI_MODEL }}` was applied automatically.
+                Only code/config files are included; AI output/logs are excluded.
                 add-paths: |
                 **/*.go
-                **/*.rej
-                **/*.orig
-                .autofix/changes.patch
                 go.mod
                 go.sum
                 .golangci.yml
