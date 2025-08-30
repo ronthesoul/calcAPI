@@ -1,0 +1,36 @@
+```diff
+--- a/main.go
++++ b/main.go
+@@ -1,23 +1,28 @@
+-# calcAPI
++// calcAPI
+ package main
+ 
+ import (
+ 	"fmt"
++
++	"go.uber.org/zap"
+ )
+ 
+ // This is a placeholder function, will be replaced/modified
+ func initialize() {
+ 	fmt.Println("Initializing...")
+ }
+ 
+ func main() {
++	zl, err := zap.NewProduction()
++	if err != nil {
++		panic(fmt.Sprintf("failed to initialize zap logger: %v", err))
++	}
++	defer func() { _ = zl.Sync() }()
++
+ 	initialize()
+ 	fmt.Println("Application starting...")
+ 	
+ 	// Some logic that declared 'x'
+ 	if true {
+-		var x int // This is the line 19 error: declared and not used
+ 	}
+ 	
+ 	fmt.Println("Application exiting.")
+```

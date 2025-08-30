@@ -1,0 +1,30 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "```diff\n--- a/main.go\n+++ b/main.go\n@@ -1,23 +1,28 @@\n-# calcAPI\n+// calcAPI\n package main\n \n import (\n \t\"fmt\"\n+\n+\t\"go.uber.org/zap\"\n )\n \n // This is a placeholder function, will be replaced/modified\n func initialize() {\n \tfmt.Println(\"Initializing...\")\n }\n \n func main() {\n+\tzl, err := zap.NewProduction()\n+\tif err != nil {\n+\t\tpanic(fmt.Sprintf(\"failed to initialize zap logger: %v\", err))\n+\t}\n+\tdefer func() { _ = zl.Sync() }()\n+\n \tinitialize()\n \tfmt.Println(\"Application starting...\")\n \t\n \t// Some logic that declared 'x'\n \tif true {\n-\t\tvar x int // This is the line 19 error: declared and not used\n \t}\n \t\n \tfmt.Println(\"Application exiting.\")\n```"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 162,
+    "candidatesTokenCount": 239,
+    "totalTokenCount": 4513,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 162
+      }
+    ],
+    "thoughtsTokenCount": 4112
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "zWazaPeoLqHVjMcPlpy9yAk"
+}
