@@ -312,8 +312,8 @@ jobs:
 
       - name: Open PR
         env:
-            GH_TOKEN: ${{ secrets.GH_PAT }}  
-            GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+            GH_TOKEN: ${{ secrets.GH_TOKEN }}  
+            GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
             BRANCH="${BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
             BASE="${{ github.event.pull_request.base.ref || 'main' }}"
