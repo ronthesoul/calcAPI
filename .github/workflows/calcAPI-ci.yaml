@@ -262,22 +262,33 @@ jobs:
       - name: Call Gemini for patch
         shell: bash
         env:
-          LANG: C.UTF-8
+            LANG: C.UTF-8
         run: |
-          if [ -z "$GEMINI_API_KEY" ]; then
-            echo "GEMINI_API_KEY not set; skipping autofix."; exit 0
-          fi
-          BODY=$(jq -Rs '{contents:[{role:"user",parts:[{text:.}]}]}' < prompt.txt)
-          curl -sS "https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}" \
-            -H "Content-Type: application/json" -d "$BODY" > gemini_resp.json
-          jq -r '[.candidates[]?.content.parts[]?.text // empty] | join("\n")' gemini_resp.json > ai_text.txt
-          awk '/^```(diff|patch)/{f=1;next} /^```/{if(f){f=0;next}} f' ai_text.txt > changes.patch
-          if [ ! -s changes.patch ]; then
+            # Trim any CR/LF/space from secrets/vars
+            KEY=$(printf "%s" "$GEMINI_API_KEY" | tr -d '\r\n ')
+            MODEL=$(printf "%s" "$GEMINI_MODEL"     | tr -d '\r\n ')
+
+            if [ -z "$KEY" ]; then
+            echo "GEMINI_API_KEY not set; skipping autofix."
+            exit 0
+            fi
+
+            BODY=$(jq -Rs '{contents:[{role:"user",parts:[{text:.}]}]}' < prompt.txt)
+
+            # Use header for API key (avoids URL issues)
+            curl -sS "https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent" \
+            -H "Content-Type: application/json" \
+            -H "x-goog-api-key: ${KEY}" \
+            -d "$BODY" > gemini_resp.json
+
+            jq -r '[.candidates[]?.content.parts[]?.text // empty] | join("\n")' gemini_resp.json > ai_text.txt
+            awk '/^```(diff|patch)/{f=1;next} /^```/{if(f){f=0;next}} f' ai_text.txt > changes.patch
+            if [ ! -s changes.patch ]; then
             echo "No patch extracted from model output. Exiting."
             sed -n '1,120p' ai_text.txt
             exit 0
-          fi
-          echo "Extracted patch:"; sed -n '1,200p' changes.patch
+            fi
+            echo "Extracted patch:"; sed -n '1,200p' changes.patch
 
       - name: Apply patch & verify
         shell: bash
