@@ -30,7 +30,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.24.6'
-          cache: true   # caches Go modules automatically
+          cache: true   
 
       - name: Notify Start
         run: |
@@ -117,15 +117,15 @@ jobs:
       - name: Run & Test container
         run: |
           "$NOTIFY" "🧪 Starting Step - Run & Test container" "$SLACK_WEBHOOK"
-          docker run -d --rm -p 8000:8000 --name my_app_test "$IMAGE:latest"
+          docker run -d --rm -p 8080:8080 --name mycalc_test "$IMAGE:latest"
           sleep 5
-          if curl -fsS http://localhost:8000/ > /dev/null; then
-            "$NOTIFY" "Step - Run & Test container ✅ Success (responded on :8000)" "$SLACK_WEBHOOK"
-            docker stop my_app_test
+          if [[ "$(curl -fsS --max-time 5 http://localhost:8080/health | jq -r '.status')" == "ok" ]]; then
+            "$NOTIFY" "Step - Run & Test container ✅ Success (responded on :8080)" "$SLACK_WEBHOOK"
+            docker stop mycalc_test
           else
-            "$NOTIFY" "Step - Run & Test container ❌ Failed (no response on :8000)" "$SLACK_WEBHOOK"
-            docker logs my_app_test || true
-            docker stop my_app_test
+            "$NOTIFY" "Step - Run & Test container ❌ Failed (no response on :8080)" "$SLACK_WEBHOOK"
+            docker logs mycalc_test || true
+            docker stop mycalc_test
             exit 1
           fi
 
