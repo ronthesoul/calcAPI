@@ -22,7 +22,7 @@ jobs:
     env:
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
       NOTIFY: .github/workflows/notify.sh
-      IMAGE: m4gapower/calcapi   
+      IMAGE: m4gapower/calcapi   # must be lowercase for Docker
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,11 +40,7 @@ jobs:
           chmod +x "$NOTIFY"
           echo v1.63.4 > .golangci.version
           mkdir -p artifacts
-          if [ -n "$SLACK_WEBHOOK" ]; then
-            "$NOTIFY" ":bell: Starting ${{ github.event.repository.name }} CI - Run (#$GITHUB_RUN_NUMBER) Commit: ${{ github.event.head_commit.message }} :bell:" "$SLACK_WEBHOOK"
-          else
-            echo "SLACK_WEBHOOK not set; skipping Slack notify."
-          fi
+          "$NOTIFY" ":bell: Starting ${{ github.event.repository.name }} CI - Run (#$GITHUB_RUN_NUMBER) Commit: ${{ github.event.head_commit.message }} :bell:" "$SLACK_WEBHOOK"
 
       - name: Cache golangci-lint binary
         id: lintcache
@@ -68,15 +64,15 @@ jobs:
         shell: bash
         run: |
           set +e
-          [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "Starting Step - Lint" "$SLACK_WEBHOOK" || true
+          "$NOTIFY" "Starting Step - Lint" "$SLACK_WEBHOOK"
           mkdir -p artifacts
           golangci-lint run 2>&1 | tee artifacts/lint.log
           STATUS=${PIPESTATUS[0]}
           OUTPUT=$(sed 's/"/\\"/g' artifacts/lint.log | sed ':a;N;$!ba;s/\n/\\n/g')
           if [ $STATUS -eq 0 ]; then
-            [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "Step - Lint ✅ Success" "$SLACK_WEBHOOK" || true
+            "$NOTIFY" "Step - Lint ✅ Success" "$SLACK_WEBHOOK"
           else
-            [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "Step - Lint ❌ Failed:\n\`\`\`$OUTPUT\`\`\`" "$SLACK_WEBHOOK" || true
+            "$NOTIFY" "Step - Lint ❌ Failed:\n\`\`\`$OUTPUT\`\`\`" "$SLACK_WEBHOOK"
             exit 1
           fi
 
@@ -84,15 +80,15 @@ jobs:
         shell: bash
         run: |
           set +e
-          [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "Starting Step - Early Build" "$SLACK_WEBHOOK" || true
+          "$NOTIFY" "Starting Step - Early Build" "$SLACK_WEBHOOK"
           mkdir -p artifacts
           go build -v ./... 2>&1 | tee artifacts/build.log
           STATUS=${PIPESTATUS[0]}
           OUTPUT=$(cat artifacts/build.log)
           if [ $STATUS -eq 0 ]; then
-            [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "Step - Early Build ✅ Success" "$SLACK_WEBHOOK" || true
+            "$NOTIFY" "Step - Early Build ✅ Success" "$SLACK_WEBHOOK"
           else
-            [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "Step - Early Build ❌ Failed\n\`\`\`$OUTPUT\`\`\`" "$SLACK_WEBHOOK" || true
+            "$NOTIFY" "Step - Early Build ❌ Failed\n\`\`\`$OUTPUT\`\`\`" "$SLACK_WEBHOOK"
             exit 1
           fi
 
@@ -100,15 +96,15 @@ jobs:
         shell: bash
         run: |
           set +e
-          [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "Starting Step - Test" "$SLACK_WEBHOOK" || true
+          "$NOTIFY" "Starting Step - Test" "$SLACK_WEBHOOK"
           mkdir -p artifacts
           go test -v ./... 2>&1 | tee artifacts/test.log
           STATUS=${PIPESTATUS[0]}
           OUTPUT=$(sed 's/"/\\"/g' artifacts/test.log | sed ':a;N;$!ba;s/\n/\\n/g')
           if [ $STATUS -eq 0 ]; then
-            [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "Step - Test ✅ Success" "$SLACK_WEBHOOK" || true
+            "$NOTIFY" "Step - Test ✅ Success" "$SLACK_WEBHOOK"
           else
-            [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "Step - Test ❌ Failed:\n\`\`\`$OUTPUT\`\`\`" "$SLACK_WEBHOOK" || true
+            "$NOTIFY" "Step - Test ❌ Failed:\n\`\`\`$OUTPUT\`\`\`" "$SLACK_WEBHOOK"
             exit 1
           fi
 
@@ -116,47 +112,45 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "🐳 Starting Step - Build Docker image" "$SLACK_WEBHOOK" || true
+          "$NOTIFY" "🐳 Starting Step - Build Docker image" "$SLACK_WEBHOOK"
           mkdir -p artifacts
           docker build --progress=plain -t "$IMAGE:latest" . 2>&1 | tee artifacts/docker-build.log
           STATUS=${PIPESTATUS[0]}
           if [ $STATUS -eq 0 ]; then
-            [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "Step - Build Docker image ✅ Success" "$SLACK_WEBHOOK" || true
+            "$NOTIFY" "Step - Build Docker image ✅ Success" "$SLACK_WEBHOOK"
           else
-            [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "Step - Build Docker image ❌ Failed" "$SLACK_WEBHOOK" || true
+            "$NOTIFY" "Step - Build Docker image ❌ Failed" "$SLACK_WEBHOOK"
             exit 1
           fi
 
       - name: Run & Test container
         shell: bash
         run: |
-          [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "🧪 Starting Step - Run & Test container" "$SLACK_WEBHOOK" || true
+          "$NOTIFY" "🧪 Starting Step - Run & Test container" "$SLACK_WEBHOOK"
           docker run -d --rm -p 8080:8080 --name mycalc_test "$IMAGE:latest"
           mkdir -p artifacts
-          # Try for up to ~10s
           for i in {1..10}; do
             if curl -fsS --max-time 2 http://localhost:8080/health | jq -e -r '.status=="ok"' >/dev/null; then
               HEALTH_JSON=$(curl -fsS http://localhost:8080/health || echo '{}')
               echo "$HEALTH_JSON" > artifacts/health.json
               SHORT=$(echo "$HEALTH_JSON" | jq -c .)
-              [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "Step - Run & Test container ✅ Success (on :8080)\nHealth: \`\`\`${SHORT}\`\`\`" "$SLACK_WEBHOOK" || true
+              "$NOTIFY" "Step - Run & Test container ✅ Success (on :8080)\nHealth: \`\`\`${SHORT}\`\`\`" "$SLACK_WEBHOOK"
               docker stop mycalc_test
               exit 0
             fi
             sleep 1
           done
-          # failure path: capture logs
           curl -fsS http://localhost:8080/health > artifacts/health.json || true
           docker logs mycalc_test > artifacts/container.log 2>&1 || true
           TAIL=$(tail -n 80 artifacts/container.log | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
-          [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "Step - Run & Test container ❌ Failed (no healthy response)\nLast logs:\n\`\`\`${TAIL}\`\`\`" "$SLACK_WEBHOOK" || true
+          "$NOTIFY" "Step - Run & Test container ❌ Failed (no healthy response)\nLast logs:\n\`\`\`${TAIL}\`\`\`" "$SLACK_WEBHOOK"
           docker stop mycalc_test || true
           exit 1
 
       - name: Compute next SemVer MINOR tag
         shell: bash
         run: |
-          [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "🔢 Starting Step - Compute next SemVer MINOR tag" "$SLACK_WEBHOOK" || true
+          "$NOTIFY" "🔢 Starting Step - Compute next SemVer MINOR tag" "$SLACK_WEBHOOK"
           LATEST_SEMVER=$(
             curl -s "https://hub.docker.com/v2/repositories/$IMAGE/tags/?page_size=100" |
             jq -r '[.results[].name | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))]
@@ -166,23 +160,23 @@ jobs:
           IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
           NEW_TAG="${MAJOR}.$((MINOR+1)).0"
           echo "new_tag=$NEW_TAG" >> "$GITHUB_ENV"
-          [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "Step - Compute tag ✅ $BASE → $NEW_TAG" "$SLACK_WEBHOOK" || true
+          "$NOTIFY" "Step - Compute tag ✅ $BASE → $NEW_TAG" "$SLACK_WEBHOOK"
 
       - name: Tag image with NEW_TAG
         shell: bash
         run: |
-          [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "🏷️ Starting Step - Tag image as ${IMAGE}:${new_tag}" "$SLACK_WEBHOOK" || true
+          "$NOTIFY" "🏷️ Starting Step - Tag image as ${IMAGE}:${new_tag}" "$SLACK_WEBHOOK"
           docker tag "$IMAGE:latest" "$IMAGE:${new_tag}"
-          [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "Step - Tag image ✅ ${IMAGE}:${new_tag}" "$SLACK_WEBHOOK" || true
+          "$NOTIFY" "Step - Tag image ✅ ${IMAGE}:${new_tag}" "$SLACK_WEBHOOK"
 
       - name: Push image(s)
         shell: bash
         run: |
-          [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "📤 Starting Step - Push image(s)" "$SLACK_WEBHOOK" || true
+          "$NOTIFY" "📤 Starting Step - Push image(s)" "$SLACK_WEBHOOK"
           echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
           docker push "$IMAGE:latest"
           docker push "$IMAGE:${new_tag}"
-          [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "Step - Push image(s) ✅ $IMAGE:latest & $IMAGE:${new_tag}" "$SLACK_WEBHOOK" || true
+          "$NOTIFY" "Step - Push image(s) ✅ $IMAGE:latest & $IMAGE:${new_tag}" "$SLACK_WEBHOOK"
 
       - name: Show changed files (logs) + notify
         shell: bash
@@ -192,13 +186,13 @@ jobs:
           echo "Compare: $COMPARE"
           echo "$CHANGES"
           MSG=$'Changes in this push:\n'"$COMPARE"$'\n\n'"$CHANGES"
-          [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "$MSG" "$SLACK_WEBHOOK" || true
+          "$NOTIFY" "$MSG" "$SLACK_WEBHOOK"
 
       - name: Final pipeline result
         if: success()
         shell: bash
         run: |
-          [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "🚀 Pipeline completed successfully!" "$SLACK_WEBHOOK" || true
+          "$NOTIFY" "🚀 Pipeline completed successfully!" "$SLACK_WEBHOOK"
 
       - name: Save CI logs for autofix
         if: failure()
@@ -211,23 +205,27 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          [ -n "$SLACK_WEBHOOK" ] && "$NOTIFY" "🔥 Pipeline failed!" "$SLACK_WEBHOOK" || true
+          "$NOTIFY" "🔥 Pipeline failed!" "$SLACK_WEBHOOK"
 
   autofix:
     needs: build
+    # run only if build failed; and only for push or same-repo PRs (secrets available)
     if: ${{ needs.build.result == 'failure' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
     env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4.1-mini' }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Install tools
+        run: sudo apt-get update -y && sudo apt-get install -y jq
 
       - name: Restore CI logs
         uses: actions/cache/restore@v4
@@ -239,71 +237,48 @@ jobs:
       - name: Prepare prompt
         shell: bash
         run: |
-          echo "Preparing prompt from logs..."
           {
             echo "You are an expert Go developer and CI engineer."
-            echo "Task: Read the attached CI logs (lint/test/build/docker) and return a SINGLE unified diff patch that fixes the issues with minimal changes."
+            echo "Task: Read the CI logs (lint/test/build/docker) and return a SINGLE unified diff patch that fixes issues with minimal changes."
             echo "Constraints:"
             echo " - Only change files in this repo."
             echo " - Keep code style consistent."
-            echo " - If a handler is wrong (e.g., /divide mapped to Add), fix it."
-            echo " - Flush zap logger properly (use _ = zl.Sync() in defer)."
-            echo " - For health check, ensure /health returns {\"status\":\"ok\"}."
-            echo "Output format: put ONLY the patch inside a fenced code block like:"
+            echo " - Ensure /health returns {\"status\":\"ok\"}."
+            echo " - Use defer func(){ _ = zl.Sync() }() for zap."
+            echo "Output format: ONLY a fenced diff block:"
             echo '```diff'
-            echo '--- a/path/to/file'
-            echo '+++ b/path/to/file'
+            echo '--- a/path'
+            echo '+++ b/path'
             echo '@@ ...'
             echo '```'
             echo
-            echo "=== LINT ==="
-            cat artifacts/lint.log 2>/dev/null || true
-            echo
-            echo "=== BUILD ==="
-            cat artifacts/build.log 2>/dev/null || true
-            echo
-            echo "=== TEST ==="
-            cat artifacts/test.log 2>/dev/null || true
-            echo
-            echo "=== DOCKER BUILD ==="
-            cat artifacts/docker-build.log 2>/dev/null || true
-            echo
-            echo "=== HEALTH ==="
-            sed -e 's/^/HEALTH: /' artifacts/health.json 2>/dev/null || true
+            echo "=== LINT ===";  cat artifacts/lint.log  2>/dev/null || true;  echo
+            echo "=== BUILD ==="; cat artifacts/build.log 2>/dev/null || true;  echo
+            echo "=== TEST ===";  cat artifacts/test.log  2>/dev/null || true;  echo
+            echo "=== DOCKER BUILD ==="; cat artifacts/docker-build.log 2>/dev/null || true; echo
+            echo "=== HEALTH ==="; sed -e 's/^/HEALTH: /' artifacts/health.json 2>/dev/null || true
           } > prompt.txt
           wc -c prompt.txt || true
 
-      - name: Call OpenAI for patch
+      - name: Call Gemini for patch
         shell: bash
         env:
           LANG: C.UTF-8
         run: |
-          if [ -z "$OPENAI_API_KEY" ]; then
-            echo "OPENAI_API_KEY not set; skipping autofix."; exit 0
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "GEMINI_API_KEY not set; skipping autofix."; exit 0
           fi
-          BODY=$(jq -Rs --arg model "$OPENAI_MODEL" '{model:$model, input:[{"role":"user","content":.}]}' < prompt.txt)
-          RESP=$(curl -sS https://api.openai.com/v1/responses \
-            -H "Authorization: Bearer ${OPENAI_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d "$BODY")
-          echo "$RESP" > openai_response.json
-          TEXT=$(jq -r '.output_text // ""' openai_response.json)
-          if [ -z "$TEXT" ] || [ "$TEXT" = "null" ]; then
-            TEXT=$(jq -r '[.output[]?.content[]?.text[]? // empty] | join("")' openai_response.json)
-          fi
-          printf "%s\n" "$TEXT" > openai_text.txt
-          awk '
-            /^```(diff|patch)/ {inblock=1; next}
-            /^```/ && inblock==1 {inblock=0; next}
-            inblock==1 {print}
-          ' openai_text.txt > changes.patch
+          BODY=$(jq -Rs '{contents:[{role:"user",parts:[{text:.}]}]}' < prompt.txt)
+          curl -sS "https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}" \
+            -H "Content-Type: application/json" -d "$BODY" > gemini_resp.json
+          jq -r '[.candidates[]?.content.parts[]?.text // empty] | join("\n")' gemini_resp.json > ai_text.txt
+          awk '/^```(diff|patch)/{f=1;next} /^```/{if(f){f=0;next}} f' ai_text.txt > changes.patch
           if [ ! -s changes.patch ]; then
             echo "No patch extracted from model output. Exiting."
-            sed -n '1,120p' openai_text.txt
+            sed -n '1,120p' ai_text.txt
             exit 0
           fi
-          echo "Extracted patch:"
-          sed -n '1,200p' changes.patch
+          echo "Extracted patch:"; sed -n '1,200p' changes.patch
 
       - name: Apply patch & verify
         shell: bash
@@ -322,7 +297,7 @@ jobs:
           BRANCH="autofix/${GITHUB_SHA::7}"
           git checkout -b "$BRANCH"
           git add -A
-          git commit -m "Auto-fix CI failures via OpenAI"
+          git commit -m "Auto-fix CI failures via Gemini"
           git push -u origin "$BRANCH"
 
       - name: Open PR
@@ -332,4 +307,4 @@ jobs:
           BASE="${{ github.event.pull_request.base.ref || github.ref_name }}"
           gh pr create --base "${BASE}" --head "$BRANCH" \
             --title "Auto-fix: CI failures" \
-            --body "This PR was opened automatically after CI failed. Logs were passed via Actions cache (not public artifacts). Edits generated by OpenAI model \`${OPENAI_MODEL}\`."
+            --body "This PR was opened automatically after CI failed. Logs were passed via Actions cache (not public artifacts). Edits generated by Google Gemini model \`${GEMINI_MODEL}\`."

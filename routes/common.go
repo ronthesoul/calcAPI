@@ -16,10 +16,7 @@ func parseTwo(c *gin.Context) (float64, float64, error) {
 	if aStr == "" || bStr == "" {
 		return 0, 0, errors.New("usage: /<op>/number1/number2")
 	}
-	a, err := strconv.ParseFloat(aStr, 64)
-	if err != nil {
-		return 0, 0, err
-	}
+	a, _ := strconv.ParseFloat(aStr, 64)
 
 	b, err := strconv.ParseFloat(bStr, 64)
 	if err != nil {
