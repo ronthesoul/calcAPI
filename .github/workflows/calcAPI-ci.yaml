@@ -285,22 +285,21 @@ jobs:
           fi
 
       - name: Extract & Sanitize Patch
+        id: sanitize
         if: steps.gen.outputs.patch_present == 'true'
         shell: bash
         run: |
-          # Normalize newlines (remove CR from CRLF)
+          # Normalize newlines + strip fences
           sed -i 's/\r$//' ai_text.txt
-
-          # Robust fenced extraction; overwrite changes.patch
           perl -0777 -ne 'print $1 if /```(?:diff|patch)\s*\n([\s\S]*?)\n```/s' ai_text.txt > changes.patch || true
+          # Fallback: model sometimes omits fences
+          [ -s changes.patch ] || cp ai_text.txt changes.patch
 
-          # If still empty, fall back to entire text (some models omit fences)
-          if [ ! -s changes.patch ]; then cp ai_text.txt changes.patch; fi
+          # Remove UTF-8 BOM if present
+          printf '%s' "$(tail -c +1 changes.patch)" > changes.patch
 
-          # Sanity: must look like a git-style diff
-          if ! head -n1 changes.patch | grep -Eq '^diff --git '; then
-            echo "Sanity check failed: not a git-style diff"; : > changes.patch
-          fi
+          # Require git-style header
+          head -n1 changes.patch | grep -Eq '^diff --git ' || : > changes.patch
 
           if [ -s changes.patch ]; then
             echo "sanitized_patch=true" >> "$GITHUB_OUTPUT"
@@ -312,13 +311,45 @@ jobs:
             echo "Patch empty after sanitization."
           fi
 
-      - name: Validate Patch
-        if: steps.gen.outputs.patch_present == 'true' && steps.extract___sanitize_patch.outputs.sanitized_patch != 'false'
-        id: validate
+      - name: Patch Doctor (auto-fix common format issues)
+        id: doctor
+        if: steps.sanitize.outputs.sanitized_patch == 'true'
         shell: bash
         run: |
           set -e
-          # Try -p1 (common a/ b/ prefixes); fall back to no -p
+          cp changes.patch changes.orig.patch
+
+          # 1) Drop invalid 'index' lines (non-hex blob IDs)
+          perl -0777 -pe 's/^index (?![0-9a-f]{7,40}\.\.[0-9a-f]{7,40}\s+\d+).*?\n//mg' changes.patch > _t && mv _t changes.patch
+
+          # 2) Ensure each hunk body line starts with ' ' or '+' or '-' or '\' (for "\ No newline...")
+          awk '
+            BEGIN{inh=0}
+            /^diff --git / {inh=0; print; next}
+            /^index / || /^--- / || /^\+\+\+ / {print; next}
+            /^@@ .* @@/ {inh=1; print; next}
+            {
+              if (inh) {
+                if ($0 ~ /^[ \+\-\\]/) print; else print " " $0
+              } else {
+                print
+              }
+            }
+          ' changes.patch > _t && mv _t changes.patch
+
+          # 3) Ensure file ends with newline
+          tail -c1 changes.patch | od -An -t x1 | grep -q '0a' || echo >> changes.patch
+
+          echo "---- Around suspect area (60-80) ----"
+          nl -ba changes.patch | sed -n '60,80p'
+          echo "-------------------------------------"
+
+      - name: Validate Patch
+        id: validate
+        if: steps.doctor.conclusion == 'success'
+        shell: bash
+        run: |
+          set -e
           if git apply --check --verbose -p1 changes.patch; then
             echo "strip=p1" >> "$GITHUB_OUTPUT"
           elif git apply --check --verbose changes.patch; then
@@ -344,7 +375,6 @@ jobs:
           fi
 
           if [ "${APPLY_FAIL:-0}" = "1" ]; then
-            # Hard reset and try alternate strip mode once more
             git reset --hard
             if [ "$STRIP" = "p1" ]; then
               git apply --index --3way --whitespace=fix changes.patch || { echo "code_changed=false" >> "$GITHUB_OUTPUT"; echo "Patch did not apply cleanly."; exit 0; }
@@ -353,10 +383,8 @@ jobs:
             fi
           fi
 
-          # Build check (non-blocking)
           go mod tidy || true
           go build ./... || true
-
           echo "code_changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Create Auto-Fix PR
