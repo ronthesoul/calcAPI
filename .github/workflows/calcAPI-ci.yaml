@@ -22,7 +22,7 @@ jobs:
     env:
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
       NOTIFY: .github/workflows/notify.sh
-      IMAGE: m4gapower/calcapi   # must be lowercase for Docker
+      IMAGE: m4gapower/calcapi
     steps:
       - uses: actions/checkout@v4
         with:
@@ -278,12 +278,12 @@ jobs:
 
           jq -r '[.candidates[]?.content.parts[]?.text // empty] | join("\n")' gemini_resp.json > ai_text.txt
 
-          # Initial naive extraction (acts as presence check)
-          awk '/^```(diff|patch)/{f=1;next} /^```/{if(f){f=0;next}} f' ai_text.txt > changes.patch || true
-          if [ -s changes.patch ]; then
+          # Detect presence of a diff in the raw text (no extraction here)
+          if grep -qE '^diff --git ' ai_text.txt || grep -qE '^```(diff|patch)\b' ai_text.txt; then
             echo "patch_present=true" >> "$GITHUB_OUTPUT"
           else
-            echo "No patch extracted."; echo "patch_present=false" >> "$GITHUB_OUTPUT"
+            echo "patch_present=false" >> "$GITHUB_OUTPUT"
+            echo "No obvious diff markers found in ai_text.txt"
           fi
 
       - name: Extract & Sanitize Patch
@@ -291,29 +291,32 @@ jobs:
         if: steps.gen.outputs.patch_present == 'true'
         shell: bash
         run: |
-          # Normalize newlines (remove CR from CRLF)
-          sed -i 's/\r$//' ai_text.txt
+          set -euo pipefail
+          # Normalize: strip UTF-8 BOM, convert CRLF->LF
+          perl -0777 -pe 's/^\xEF\xBB\xBF//' ai_text.txt | sed 's/\r$//' > ai_text.clean
 
-          # Robust fenced extraction; overwrite changes.patch
-          perl -0777 -ne 'print $1 if /```(?:diff|patch)\s*\n([\s\S]*?)\n```/s' ai_text.txt > changes.patch || true
+          # 1) Prefer fenced ```diff/```patch block
+          perl -0777 -ne 'if (/```(?:diff|patch)[^\n]*\n([\s\S]*?)\n```/s){print $1;exit}' ai_text.clean > changes.patch || true
 
-          # If still empty, fall back to entire text (some models omit fences)
-          if [ ! -s changes.patch ]; then cp ai_text.txt changes.patch; fi
-
-          # Sanity: must look like a git-style diff
-          if ! head -n1 changes.patch | grep -Eq '^diff --git '; then
-            echo "Sanity check failed: not a git-style diff"
-            : > changes.patch
+          # 2) If still empty, capture from the first "diff --git" line to EOF
+          if [ ! -s changes.patch ]; then
+            perl -0777 -ne 'print $1 if /(diff --git [\s\S]*)/s' ai_text.clean > changes.patch || true
           fi
 
-          if [ -s changes.patch ]; then
+          # 3) If we captured the whole text (e.g., preamble + diff), trim to first diff header
+          if [ -s changes.patch ] && ! head -n1 changes.patch | grep -q '^diff --git '; then
+            awk 'f{print} /^diff --git /{f=1;print}' ai_text.clean > changes.patch || true
+          fi
+
+          # Final sanity: keep file if it starts with a git diff header
+          if head -n1 changes.patch | grep -q '^diff --git '; then
             echo "sanitized_patch=true" >> "$GITHUB_OUTPUT"
-            echo "---- PATCH HEAD (first 120 lines) ----"
-            nl -ba changes.patch | sed -n '1,120p'
-            echo "--------------------------------------"
+            printf "Patch bytes: "; wc -c < changes.patch
+            printf "Patch lines: "; wc -l < changes.patch
           else
             echo "sanitized_patch=false" >> "$GITHUB_OUTPUT"
-            echo "Patch empty after sanitization."
+            echo "No valid git-style diff could be extracted."
+            : > changes.patch  # leave empty for clarity
           fi
 
       - name: Debug Inspect AI text & patch
@@ -321,7 +324,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for f in ai_text.txt changes.patch; do
+          for f in ai_text.txt ai_text.clean changes.patch; do
             if [ -f "$f" ]; then
               echo "===== $f : basic info ====="
               printf "bytes: "; wc -c < "$f" || true
@@ -338,9 +341,6 @@ jobs:
               echo "===== $f : show non-printing (sed -n l) first 80 lines ====="
               sed -n '1,80l' "$f" || true
               echo
-              echo "===== $f : hex dump (od) head ====="
-              od -An -tx1 -v "$f" | head -n 50 || true
-              echo
             else
               echo "File not found: $f"
             fi
@@ -352,7 +352,6 @@ jobs:
         shell: bash
         run: |
           set -e
-          # Try -p1 (common a/ b/ prefixes); fall back to no -p
           if git apply --check --verbose -p1 changes.patch; then
             echo "strip=p1" >> "$GITHUB_OUTPUT"
           elif git apply --check --verbose changes.patch; then
@@ -378,7 +377,6 @@ jobs:
           fi
 
           if [ "${APPLY_FAIL:-0}" = "1" ]; then
-            # Hard reset and try alternate strip mode once more
             git reset --hard
             if [ "$STRIP" = "p1" ]; then
               git apply --index --3way --whitespace=fix changes.patch || { echo "code_changed=false" >> "$GITHUB_OUTPUT"; echo "Patch did not apply cleanly."; exit 0; }
@@ -387,10 +385,8 @@ jobs:
             fi
           fi
 
-          # Build check (non-blocking)
           go mod tidy || true
           go build ./... || true
-
           echo "code_changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Create Auto-Fix PR
@@ -428,6 +424,7 @@ jobs:
             prompt.txt
             gemini_resp.json
             ai_text.txt
+            ai_text.clean
             changes.patch
             artifacts/**
           if-no-files-found: ignore
