@@ -217,6 +217,7 @@ jobs:
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
+
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -224,7 +225,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install tools
-        run: sudo apt-get update -y && sudo apt-get install -y jq
+        run: sudo apt-get update -y && sudo apt-get install -y jq perl
 
       - name: Restore CI logs
         uses: actions/cache/restore@v4
@@ -238,13 +239,14 @@ jobs:
         run: |
           {
             echo "You are an expert Go developer and CI engineer."
-            echo "Task: Read the CI logs (lint/test/build/docker) and return a SINGLE unified diff patch that fixes issues with minimal changes."
-            echo "Constraints:"
-            echo " - Only change files in this repo."
-            echo " - Keep code style consistent."
+            echo "Task: Read the CI logs and return a SINGLE git-style unified diff that minimally fixes the issues."
+            echo "Hard constraints:"
+            echo " - Output EXACTLY what `git diff` would emit."
+            echo " - Include 'diff --git a/<path> b/<path>', 'index', '---', '+++', and '@@' hunks."
+            echo " - Hunk counts MUST match. No prose, no backticks, no nested code fences."
+            echo " - Only modify files in this repo."
             echo " - Ensure /health returns {\"status\":\"ok\"}."
-            echo " - Use defer func(){ _ = zl.Sync() }() for zap."
-            echo "Output format: ONLY a fenced diff block containing a unified diff."
+            echo " - Use: defer func(){ _ = zl.Sync() }() for zap."
             echo
             echo "=== LINT ===";  cat artifacts/lint.log  2>/dev/null || true;  echo
             echo "=== BUILD ==="; cat artifacts/build.log 2>/dev/null || true;  echo
@@ -273,26 +275,82 @@ jobs:
             -d "$BODY" > gemini_resp.json
 
           jq -r '[.candidates[]?.content.parts[]?.text // empty] | join("\n")' gemini_resp.json > ai_text.txt
-          awk '/^```(diff|patch)/{f=1;next} /^```/{if(f){f=0;next}} f' ai_text.txt > changes.patch || true
 
+          # Initial naive extraction (acts as presence check)
+          awk '/^```(diff|patch)/{f=1;next} /^```/{if(f){f=0;next}} f' ai_text.txt > changes.patch || true
           if [ -s changes.patch ]; then
             echo "patch_present=true" >> "$GITHUB_OUTPUT"
           else
             echo "No patch extracted."; echo "patch_present=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Extract & Sanitize Patch
+        if: steps.gen.outputs.patch_present == 'true'
+        shell: bash
+        run: |
+          # Normalize newlines (remove CR from CRLF)
+          sed -i 's/\r$//' ai_text.txt
+
+          # Robust fenced extraction; overwrite changes.patch
+          perl -0777 -ne 'print $1 if /```(?:diff|patch)\s*\n([\s\S]*?)\n```/s' ai_text.txt > changes.patch || true
+
+          # If still empty, fall back to entire text (some models omit fences)
+          if [ ! -s changes.patch ]; then cp ai_text.txt changes.patch; fi
+
+          # Sanity: must look like a git-style diff
+          if ! head -n1 changes.patch | grep -Eq '^diff --git '; then
+            echo "Sanity check failed: not a git-style diff"; : > changes.patch
+          fi
+
+          if [ -s changes.patch ]; then
+            echo "sanitized_patch=true" >> "$GITHUB_OUTPUT"
+            echo "---- PATCH HEAD (first 120 lines) ----"
+            nl -ba changes.patch | sed -n '1,120p'
+            echo "--------------------------------------"
+          else
+            echo "sanitized_patch=false" >> "$GITHUB_OUTPUT"
+            echo "Patch empty after sanitization."
+          fi
+
+      - name: Validate Patch
+        if: steps.gen.outputs.patch_present == 'true' && steps.extract___sanitize_patch.outputs.sanitized_patch != 'false'
+        id: validate
+        shell: bash
+        run: |
+          set -e
+          # Try -p1 (common a/ b/ prefixes); fall back to no -p
+          if git apply --check --verbose -p1 changes.patch; then
+            echo "strip=p1" >> "$GITHUB_OUTPUT"
+          elif git apply --check --verbose changes.patch; then
+            echo "strip=none" >> "$GITHUB_OUTPUT"
+          else
+            echo "code_changed=false" >> "$GITHUB_OUTPUT"
+            echo "Patch failed validation."; exit 0
+          fi
+
       - name: Apply patch & verify
         id: apply
-        if: steps.gen.outputs.patch_present == 'true'
+        if: steps.validate.outputs.strip
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Apply patch (index to stage changes), ignore whitespace noise
-          if ! git apply --index --whitespace=fix -p0 changes.patch; then
-            echo "code_changed=false" >> "$GITHUB_OUTPUT"
-            echo "Patch did not apply cleanly."; exit 0
+          STRIP="${{ steps.validate.outputs.strip }}"
+          if [ "$STRIP" = "p1" ]; then
+            git apply --index --3way --whitespace=fix -p1 changes.patch || APPLY_FAIL=1
+          else
+            git apply --index --3way --whitespace=fix changes.patch || APPLY_FAIL=1
+          fi
+
+          if [ "${APPLY_FAIL:-0}" = "1" ]; then
+            # Hard reset and try alternate strip mode once more
+            git reset --hard
+            if [ "$STRIP" = "p1" ]; then
+              git apply --index --3way --whitespace=fix changes.patch || { echo "code_changed=false" >> "$GITHUB_OUTPUT"; echo "Patch did not apply cleanly."; exit 0; }
+            else
+              git apply --index --3way --whitespace=fix -p1 changes.patch || { echo "code_changed=false" >> "$GITHUB_OUTPUT"; echo "Patch did not apply cleanly."; exit 0; }
+            fi
           fi
 
           # Build check (non-blocking)
@@ -305,7 +363,7 @@ jobs:
         if: steps.apply.outputs.code_changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${{ secrets.GH_TOKEN }}  
+          token: ${{ secrets.GH_TOKEN }}
           branch: auto-fix/${{ github.run_id }}
           base: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
           commit-message: "Auto-fix: apply model-suggested changes"
@@ -326,3 +384,4 @@ jobs:
             ci
             auto-fix
           delete-branch: true
+
