@@ -208,223 +208,243 @@ jobs:
           "$NOTIFY" "🔥 Pipeline failed!" "$SLACK_WEBHOOK"
 
   autofix:
-    needs: build
-    if: ${{ always() && needs.build.result == 'failure' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    env:
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
+      needs: build
+      if: ${{ always() && needs.build.result == 'failure' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+      runs-on: ubuntu-latest
+      permissions: { contents: write, pull-requests: write }
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
 
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      steps:
+        - name: Check out source
+          uses: actions/checkout@v4
+          with: { fetch-depth: 0 }
 
-      - name: Install tools
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y jq perl file
+        - name: Install tools
+          run: |
+            sudo apt-get update -y
+            sudo apt-get install -y jq perl file
 
-      - name: Restore CI logs
-        uses: actions/cache/restore@v4
-        with:
-          path: artifacts
-          key: ci-logs-${{ github.run_id }}
-          fail-on-cache-miss: true
+        - name: Restore CI logs
+          uses: actions/cache/restore@v4
+          with:
+            path: artifacts
+            key: ci-logs-${{ github.run_id }}
+            fail-on-cache-miss: true
 
-      - name: Prepare prompt
-        shell: bash
-        run: |
-          {
-            echo "You are an expert Go developer and CI engineer."
-            echo "Task: Read the CI logs and return a SINGLE git-style unified diff that minimally fixes the issues."
-            echo "Hard constraints:"
-            echo " - Output EXACTLY what \`git diff\` would emit."
-            echo " - Include 'diff --git a/<path> b/<path>', 'index', '---', '+++', and '@@' hunks."
-            echo " - Hunk counts MUST match. No prose, no backticks, no nested code fences."
-            echo " - Only modify files in this repo."
-            echo " - Ensure /health returns {\"status\":\"ok\"}."
-            echo " - Use: defer func(){ _ = zl.Sync() }() for zap."
-            echo
-            echo "=== LINT ===";  cat artifacts/lint.log  2>/dev/null || true;  echo
-            echo "=== BUILD ==="; cat artifacts/build.log 2>/dev/null || true;  echo
-            echo "=== TEST ===";  cat artifacts/test.log  2>/dev/null || true;  echo
-            echo "=== DOCKER BUILD ==="; cat artifacts/docker-build.log 2>/dev/null || true; echo
-            echo "=== HEALTH ==="; sed -e 's/^/HEALTH: /' artifacts/health.json 2>/dev/null || true
-          } > prompt.txt
-          wc -c prompt.txt || true
+        - name: Prepare prompt
+          shell: bash
+          run: |
+            cat > prompt.txt << 'EOF'
+            You are an expert Go developer and CI engineer.
 
-      - name: Call Gemini for patch
-        id: gen
-        shell: bash
-        env:
-          LANG: C.UTF-8
-        run: |
-          if [ -z "$GEMINI_API_KEY" ]; then
-            echo "GEMINI_API_KEY not set; skipping autofix."; exit 0
-          fi
-          KEY=$(printf "%s" "$GEMINI_API_KEY" | tr -d '\r\n ')
-          MODEL=$(printf "%s" "$GEMINI_MODEL" | tr -d '\r\n ')
-          BODY=$(jq -Rs '{contents:[{role:"user",parts:[{text:.}]}]}' < prompt.txt)
+            TASK
+            ----
+            From the CI logs below, produce a SINGLE unified diff that minimally fixes the issues.
 
-          curl -sS "https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent" \
-            -H "Content-Type: application/json" \
-            -H "x-goog-api-key: ${KEY}" \
-            -d "$BODY" > gemini_resp.json
+            HARD CONSTRAINTS
+            ----------------
+            1) Output MUST be a RAW git unified diff — *no* code fences, *no* prose, *no* markdown.
+            2) First line MUST start with:  diff --git a/… b/…
+            3) Each file section MUST include:
+              - diff --git a/P b/P
+              - index <oldsha>..<newsha> 100644   (hashes may be dummy but syntactically valid)
+              - --- a/P
+              - +++ b/P
+              - One or more @@ hunks with correct counts.
+            4) In every hunk body, EVERY line MUST begin with exactly one of:
+              ' ' (space)  for context/unchanged lines
+              '+'          for additions
+              '-'          for deletions
+              '\'          only for the exact marker "\ No newline at end of file"
+              (Blank lines MUST be represented as a single space line: " ")
+            5) Hunk line counts MUST match the +/- totals you emit.
+            6) Only modify files that exist in this repo.
+            7) Ensure /health returns {"status":"ok"} and use: defer func(){ _ = zl.Sync() }() for zap.
 
-          jq -r '[.candidates[]?.content.parts[]?.text // empty] | join("\n")' gemini_resp.json > ai_text.txt
+            SAMPLE (format only)
+            --------------------
+            diff --git a/foo.go b/foo.go
+            index 1111111..2222222 100644
+            --- a/foo.go
+            +++ b/foo.go
+            @@ -1,2 +1,3 @@
+            package main
+            -func A() {}
+            +func A() {}
+            +func B() {}
 
-          # Detect presence of a diff in the raw text (no extraction here)
-          if grep -qE '^diff --git ' ai_text.txt || grep -qE '^```(diff|patch)\b' ai_text.txt; then
-            echo "patch_present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "patch_present=false" >> "$GITHUB_OUTPUT"
-            echo "No obvious diff markers found in ai_text.txt"
-          fi
+            === LINT ===
+            EOF
+            cat artifacts/lint.log  2>/dev/null >> prompt.txt || true
+            echo -e "\n=== BUILD ==="          >> prompt.txt
+            cat artifacts/build.log 2>/dev/null >> prompt.txt || true
+            echo -e "\n=== TEST ==="           >> prompt.txt
+            cat artifacts/test.log  2>/dev/null >> prompt.txt || true
+            echo -e "\n=== DOCKER BUILD ==="   >> prompt.txt
+            cat artifacts/docker-build.log 2>/dev/null >> prompt.txt || true
+            echo -e "\n=== HEALTH ==="         >> prompt.txt
+            sed -e 's/^/HEALTH: /' artifacts/health.json 2>/dev/null >> prompt.txt || true
+            wc -c prompt.txt || true
 
-      - name: Extract & Sanitize Patch
-        id: sanitize
-        if: steps.gen.outputs.patch_present == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Normalize: strip UTF-8 BOM, convert CRLF->LF
-          perl -0777 -pe 's/^\xEF\xBB\xBF//' ai_text.txt | sed 's/\r$//' > ai_text.clean
-
-          # 1) Prefer fenced ```diff/```patch block
-          perl -0777 -ne 'if (/```(?:diff|patch)[^\n]*\n([\s\S]*?)\n```/s){print $1;exit}' ai_text.clean > changes.patch || true
-
-          # 2) If still empty, capture from the first "diff --git" line to EOF
-          if [ ! -s changes.patch ]; then
-            perl -0777 -ne 'print $1 if /(diff --git [\s\S]*)/s' ai_text.clean > changes.patch || true
-          fi
-
-          # 3) If we captured the whole text (e.g., preamble + diff), trim to first diff header
-          if [ -s changes.patch ] && ! head -n1 changes.patch | grep -q '^diff --git '; then
-            awk 'f{print} /^diff --git /{f=1;print}' ai_text.clean > changes.patch || true
-          fi
-
-          # Final sanity: keep file if it starts with a git diff header
-          if head -n1 changes.patch | grep -q '^diff --git '; then
-            echo "sanitized_patch=true" >> "$GITHUB_OUTPUT"
-            printf "Patch bytes: "; wc -c < changes.patch
-            printf "Patch lines: "; wc -l < changes.patch
-          else
-            echo "sanitized_patch=false" >> "$GITHUB_OUTPUT"
-            echo "No valid git-style diff could be extracted."
-            : > changes.patch  # leave empty for clarity
-          fi
-
-      - name: Debug Inspect AI text & patch
-        if: steps.gen.outputs.patch_present == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          for f in ai_text.txt ai_text.clean changes.patch; do
-            if [ -f "$f" ]; then
-              echo "===== $f : basic info ====="
-              printf "bytes: "; wc -c < "$f" || true
-              printf "lines: "; wc -l < "$f" || true
-              printf "mime : "; file -bi "$f" || true
-              echo "CRLF line count: $(grep -c $'\r$' "$f" || echo 0)"
-              echo
-              echo "===== $f : first 120 lines (numbered) ====="
-              nl -ba "$f" | sed -n '1,120p' || true
-              echo
-              echo "===== $f : last 60 lines (numbered) ====="
-              nl -ba "$f" | tail -n 60 || true
-              echo
-              echo "===== $f : show non-printing (sed -n l) first 80 lines ====="
-              sed -n '1,80l' "$f" || true
-              echo
-            else
-              echo "File not found: $f"
+        - name: Call Gemini for patch
+          id: gen
+          shell: bash
+          env: { LANG: C.UTF-8 }
+          run: |
+            if [ -z "$GEMINI_API_KEY" ]; then
+              echo "GEMINI_API_KEY not set; skipping autofix."; exit 0
             fi
-          done
+            KEY=$(printf "%s" "$GEMINI_API_KEY" | tr -d '\r\n ')
+            MODEL=$(printf "%s" "$GEMINI_MODEL" | tr -d '\r\n ')
+            BODY=$(jq -Rs '{contents:[{role:"user",parts:[{text:.}]}]}' < prompt.txt)
 
-      - name: Validate Patch
-        if: steps.gen.outputs.patch_present == 'true' && steps.sanitize.outputs.sanitized_patch != 'false'
-        id: validate
-        shell: bash
-        run: |
-          set -e
-          if git apply --check --verbose -p1 changes.patch; then
-            echo "strip=p1" >> "$GITHUB_OUTPUT"
-          elif git apply --check --verbose changes.patch; then
-            echo "strip=none" >> "$GITHUB_OUTPUT"
-          else
-            echo "code_changed=false" >> "$GITHUB_OUTPUT"
-            echo "Patch failed validation."; exit 0
-          fi
+            curl -sS "https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent" \
+              -H "Content-Type: application/json" \
+              -H "x-goog-api-key: ${KEY}" \
+              -d "$BODY" > gemini_resp.json
 
-      - name: Apply patch & verify
-        id: apply
-        if: steps.validate.outputs.strip
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+            jq -r '[.candidates[]?.content.parts[]?.text // empty] | join("\n")' gemini_resp.json > ai_text.txt
 
-          STRIP="${{ steps.validate.outputs.strip }}"
-          if [ "$STRIP" = "p1" ]; then
-            git apply --index --3way --whitespace=fix -p1 changes.patch || APPLY_FAIL=1
-          else
-            git apply --index --3way --whitespace=fix changes.patch || APPLY_FAIL=1
-          fi
+            if grep -qE '^diff --git ' ai_text.txt || grep -qE '^```(diff|patch)\b' ai_text.txt; then
+              echo "patch_present=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "patch_present=false" >> "$GITHUB_OUTPUT"
+              echo "No diff markers in ai_text.txt"
+            fi
 
-          if [ "${APPLY_FAIL:-0}" = "1" ]; then
-            git reset --hard
+        - name: Extract & Sanitize Patch
+          id: sanitize
+          if: steps.gen.outputs.patch_present == 'true'
+          shell: bash
+          run: |
+            set -euo pipefail
+            # Strip BOM; CRLF->LF
+            perl -0777 -pe 's/^\xEF\xBB\xBF//' ai_text.txt | sed 's/\r$//' > ai_text.clean
+
+            # Prefer fenced block
+            perl -0777 -ne 'if (/```(?:diff|patch)[^\n]*\n([\s\S]*?)\n```/s){print $1;exit}' ai_text.clean > changes.patch || true
+            # Or from first diff --git
+            if [ ! -s changes.patch ]; then
+              perl -0777 -ne 'print $1 if /(diff --git [\s\S]*)/s' ai_text.clean > changes.patch || true
+            fi
+            # Trim any preamble so first line is diff --git
+            if [ -s changes.patch ] && ! head -n1 changes.patch | grep -q '^diff --git '; then
+              awk 'f{print} /^diff --git /{f=1;print}' ai_text.clean > changes.patch || true
+            fi
+            # Leave empty if invalid
+            if head -n1 changes.patch | grep -q '^diff --git '; then
+              echo "sanitized_patch=true" >> "$GITHUB_OUTPUT"
+            else
+              : > changes.patch
+              echo "sanitized_patch=false" >> "$GITHUB_OUTPUT"
+            fi
+
+        - name: Repair patch (prefix missing context lines)
+          id: repair
+          if: steps.sanitize.outputs.sanitized_patch == 'true'
+          shell: bash
+          run: |
+            awk '
+              BEGIN{in_hunk=0}
+              /^diff --git / {in_hunk=0; print; next}
+              /^index /      {print; next}
+              /^--- /        {print; next}
+              /^\+\+\+ /     {print; next}
+              /^@@ /         {in_hunk=1; print; next}
+              {
+                if(in_hunk){
+                  if ($0 ~ /^( |\+|\-|\\ No newline at end of file)/) { print; }
+                  else if ($0 == "") { print " "; }
+                  else { print " " $0; }
+                } else {
+                  print;
+                }
+              }
+            ' changes.patch > changes.fixed
+
+            mv changes.fixed changes.patch
+            printf "Repaired patch lines: "; wc -l < changes.patch
+
+        - name: Validate Patch
+          id: validate
+          if: steps.gen.outputs.patch_present == 'true'
+          shell: bash
+          run: |
+            set -e
+            if git apply --check --verbose -p1 changes.patch; then
+              echo "strip=p1" >> "$GITHUB_OUTPUT"
+            elif git apply --check --verbose changes.patch; then
+              echo "strip=none" >> "$GITHUB_OUTPUT"
+            else
+              echo "code_changed=false" >> "$GITHUB_OUTPUT"
+              echo "Patch failed validation."; exit 0
+            fi
+
+        - name: Apply patch & verify
+          id: apply
+          if: steps.validate.outputs.strip
+          shell: bash
+          run: |
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+
+            STRIP="${{ steps.validate.outputs.strip }}"
             if [ "$STRIP" = "p1" ]; then
-              git apply --index --3way --whitespace=fix changes.patch || { echo "code_changed=false" >> "$GITHUB_OUTPUT"; echo "Patch did not apply cleanly."; exit 0; }
+              git apply --index --3way --whitespace=fix -p1 changes.patch || APPLY_FAIL=1
             else
-              git apply --index --3way --whitespace=fix -p1 changes.patch || { echo "code_changed=false" >> "$GITHUB_OUTPUT"; echo "Patch did not apply cleanly."; exit 0; }
+              git apply --index --3way --whitespace=fix changes.patch || APPLY_FAIL=1
             fi
-          fi
 
-          go mod tidy || true
-          go build ./... || true
-          echo "code_changed=true" >> "$GITHUB_OUTPUT"
+            if [ "${APPLY_FAIL:-0}" = "1" ]; then
+              git reset --hard
+              if [ "$STRIP" = "p1" ]; then
+                git apply --index --3way --whitespace=fix changes.patch || { echo "code_changed=false" >> "$GITHUB_OUTPUT"; echo "Patch did not apply cleanly."; exit 0; }
+              else
+                git apply --index --3way --whitespace=fix -p1 changes.patch || { echo "code_changed=false" >> "$GITHUB_OUTPUT"; echo "Patch did not apply cleanly."; exit 0; }
+              fi
+            fi
 
-      - name: Create Auto-Fix PR
-        if: steps.apply.outputs.code_changed == 'true'
-        uses: peter-evans/create-pull-request@v6
-        with:
-          token: ${{ secrets.GH_TOKEN }}
-          branch: auto-fix/${{ github.run_id }}
-          base: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
-          commit-message: "Auto-fix: apply model-suggested changes"
-          title: "Auto-fix: CI failures"
-          body: |
-            PR opened automatically after CI failed.
-            Edits generated by Google Gemini model `${{ env.GEMINI_MODEL }}`.
-            (Logs were passed between jobs via Actions cache.)
-          add-paths: |
-            **/*.go
-            go.mod
-            go.sum
-            .golangci.yml
-            .github/**/*
-          author: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
-          committer: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
-          labels: |
-            ci
-            auto-fix
-          delete-branch: true
+            go mod tidy || true
+            go build ./... || true
+            echo "code_changed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Upload patch debug artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: autofix-patch-debug
-          path: |
-            prompt.txt
-            gemini_resp.json
-            ai_text.txt
-            ai_text.clean
-            changes.patch
-            artifacts/**
-          if-no-files-found: ignore
+        - name: Create Auto-Fix PR
+          if: steps.apply.outputs.code_changed == 'true'
+          uses: peter-evans/create-pull-request@v6
+          with:
+            token: ${{ secrets.GH_TOKEN }}
+            branch: auto-fix/${{ github.run_id }}
+            base: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+            commit-message: "Auto-fix: apply model-suggested changes"
+            title: "Auto-fix: CI failures"
+            body: |
+              PR opened automatically after CI failed.
+              Edits generated by Google Gemini model `${{ env.GEMINI_MODEL }}`.
+              (Logs were passed between jobs via Actions cache.)
+            add-paths: |
+              **/*.go
+              go.mod
+              go.sum
+              .golangci.yml
+              .github/**/*
+            author: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+            committer: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+            labels: |
+              ci
+              auto-fix
+            delete-branch: true
+
+        - name: Upload patch debug artifacts
+          if: always()
+          uses: actions/upload-artifact@v4
+          with:
+            name: autofix-patch-debug
+            path: |
+              prompt.txt
+              gemini_resp.json
+              ai_text.txt
+              changes.patch
+              artifacts/**
+            if-no-files-found: ignore
