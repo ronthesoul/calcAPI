@@ -225,7 +225,9 @@ jobs:
           fetch-depth: 0
 
       - name: Install tools
-        run: sudo apt-get update -y && sudo apt-get install -y jq perl
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq perl file
 
       - name: Restore CI logs
         uses: actions/cache/restore@v4
@@ -241,7 +243,7 @@ jobs:
             echo "You are an expert Go developer and CI engineer."
             echo "Task: Read the CI logs and return a SINGLE git-style unified diff that minimally fixes the issues."
             echo "Hard constraints:"
-            echo " - Output EXACTLY what `git diff` would emit."
+            echo " - Output EXACTLY what \`git diff\` would emit."
             echo " - Include 'diff --git a/<path> b/<path>', 'index', '---', '+++', and '@@' hunks."
             echo " - Hunk counts MUST match. No prose, no backticks, no nested code fences."
             echo " - Only modify files in this repo."
@@ -289,17 +291,20 @@ jobs:
         if: steps.gen.outputs.patch_present == 'true'
         shell: bash
         run: |
-          # Normalize newlines + strip fences
+          # Normalize newlines (remove CR from CRLF)
           sed -i 's/\r$//' ai_text.txt
+
+          # Robust fenced extraction; overwrite changes.patch
           perl -0777 -ne 'print $1 if /```(?:diff|patch)\s*\n([\s\S]*?)\n```/s' ai_text.txt > changes.patch || true
-          # Fallback: model sometimes omits fences
-          [ -s changes.patch ] || cp ai_text.txt changes.patch
 
-          # Remove UTF-8 BOM if present
-          printf '%s' "$(tail -c +1 changes.patch)" > changes.patch
+          # If still empty, fall back to entire text (some models omit fences)
+          if [ ! -s changes.patch ]; then cp ai_text.txt changes.patch; fi
 
-          # Require git-style header
-          head -n1 changes.patch | grep -Eq '^diff --git ' || : > changes.patch
+          # Sanity: must look like a git-style diff
+          if ! head -n1 changes.patch | grep -Eq '^diff --git '; then
+            echo "Sanity check failed: not a git-style diff"
+            : > changes.patch
+          fi
 
           if [ -s changes.patch ]; then
             echo "sanitized_patch=true" >> "$GITHUB_OUTPUT"
@@ -311,45 +316,43 @@ jobs:
             echo "Patch empty after sanitization."
           fi
 
-      - name: Patch Doctor (auto-fix common format issues)
-        id: doctor
-        if: steps.sanitize.outputs.sanitized_patch == 'true'
+      - name: Debug Inspect AI text & patch
+        if: steps.gen.outputs.patch_present == 'true'
         shell: bash
         run: |
-          set -e
-          cp changes.patch changes.orig.patch
-
-          # 1) Drop invalid 'index' lines (non-hex blob IDs)
-          perl -0777 -pe 's/^index (?![0-9a-f]{7,40}\.\.[0-9a-f]{7,40}\s+\d+).*?\n//mg' changes.patch > _t && mv _t changes.patch
-
-          # 2) Ensure each hunk body line starts with ' ' or '+' or '-' or '\' (for "\ No newline...")
-          awk '
-            BEGIN{inh=0}
-            /^diff --git / {inh=0; print; next}
-            /^index / || /^--- / || /^\+\+\+ / {print; next}
-            /^@@ .* @@/ {inh=1; print; next}
-            {
-              if (inh) {
-                if ($0 ~ /^[ \+\-\\]/) print; else print " " $0
-              } else {
-                print
-              }
-            }
-          ' changes.patch > _t && mv _t changes.patch
-
-          # 3) Ensure file ends with newline
-          tail -c1 changes.patch | od -An -t x1 | grep -q '0a' || echo >> changes.patch
-
-          echo "---- Around suspect area (60-80) ----"
-          nl -ba changes.patch | sed -n '60,80p'
-          echo "-------------------------------------"
+          set -euo pipefail
+          for f in ai_text.txt changes.patch; do
+            if [ -f "$f" ]; then
+              echo "===== $f : basic info ====="
+              printf "bytes: "; wc -c < "$f" || true
+              printf "lines: "; wc -l < "$f" || true
+              printf "mime : "; file -bi "$f" || true
+              echo "CRLF line count: $(grep -c $'\r$' "$f" || echo 0)"
+              echo
+              echo "===== $f : first 120 lines (numbered) ====="
+              nl -ba "$f" | sed -n '1,120p' || true
+              echo
+              echo "===== $f : last 60 lines (numbered) ====="
+              nl -ba "$f" | tail -n 60 || true
+              echo
+              echo "===== $f : show non-printing (sed -n l) first 80 lines ====="
+              sed -n '1,80l' "$f" || true
+              echo
+              echo "===== $f : hex dump (od) head ====="
+              od -An -tx1 -v "$f" | head -n 50 || true
+              echo
+            else
+              echo "File not found: $f"
+            fi
+          done
 
       - name: Validate Patch
+        if: steps.gen.outputs.patch_present == 'true' && steps.sanitize.outputs.sanitized_patch != 'false'
         id: validate
-        if: steps.doctor.conclusion == 'success'
         shell: bash
         run: |
           set -e
+          # Try -p1 (common a/ b/ prefixes); fall back to no -p
           if git apply --check --verbose -p1 changes.patch; then
             echo "strip=p1" >> "$GITHUB_OUTPUT"
           elif git apply --check --verbose changes.patch; then
@@ -375,6 +378,7 @@ jobs:
           fi
 
           if [ "${APPLY_FAIL:-0}" = "1" ]; then
+            # Hard reset and try alternate strip mode once more
             git reset --hard
             if [ "$STRIP" = "p1" ]; then
               git apply --index --3way --whitespace=fix changes.patch || { echo "code_changed=false" >> "$GITHUB_OUTPUT"; echo "Patch did not apply cleanly."; exit 0; }
@@ -383,8 +387,10 @@ jobs:
             fi
           fi
 
+          # Build check (non-blocking)
           go mod tidy || true
           go build ./... || true
+
           echo "code_changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Create Auto-Fix PR
@@ -413,3 +419,15 @@ jobs:
             auto-fix
           delete-branch: true
 
+      - name: Upload patch debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autofix-patch-debug
+          path: |
+            prompt.txt
+            gemini_resp.json
+            ai_text.txt
+            changes.patch
+            artifacts/**
+          if-no-files-found: ignore
