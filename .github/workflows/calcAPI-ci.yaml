@@ -234,6 +234,41 @@ jobs:
             key: ci-logs-${{ github.run_id }}
             fail-on-cache-miss: true
 
+        - name: Prepare prompt
+          shell: bash
+          run: |
+            cat > prompt.txt << 'EOF'
+            You are an expert Go developer and CI engineer.
+
+            TASK
+            ----
+            From the CI logs below, produce a SINGLE unified diff that minimally fixes the issues.
+
+            HARD CONSTRAINTS
+            ----------------
+            1) Output MUST be a RAW git unified diff — *no* code fences, *no* prose, *no* markdown.
+            2) First line MUST start with:  diff --git a/… b/…
+            3) Each file section MUST include:
+              - diff --git a/P b/P
+              - index <oldsha>..<newsha> 100644
+              - --- a/P
+              - +++ b/P
+              - @@ hunks …
+            4) Only modify files that exist in this repo.
+
+            === LINT ===
+            EOF
+            cat artifacts/lint.log  2>/dev/null >> prompt.txt || true
+            echo -e "\n=== BUILD ==="          >> prompt.txt
+            cat artifacts/build.log 2>/dev/null >> prompt.txt || true
+            echo -e "\n=== TEST ==="           >> prompt.txt
+            cat artifacts/test.log  2>/dev/null >> prompt.txt || true
+            echo -e "\n=== DOCKER BUILD ==="   >> prompt.txt
+            cat artifacts/docker-build.log 2>/dev/null >> prompt.txt || true
+            echo -e "\n=== HEALTH ==="         >> prompt.txt
+            sed -e 's/^/HEALTH: /' artifacts/health.json 2>/dev/null >> prompt.txt || true
+            wc -c prompt.txt || true
+
 
         - name: Generate unified diff with Gemini
           id: gen
