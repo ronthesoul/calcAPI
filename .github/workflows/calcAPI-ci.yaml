@@ -310,7 +310,6 @@ jobs:
             fi
 
         - name: Apply patch (robust)
-          if: ${{ steps.gen.outputs.no_usable_diff != 'true' }}
           id: apply
           shell: bash
           run: |
@@ -318,13 +317,28 @@ jobs:
             git config user.name  "ci-autofix-bot"
             git config user.email "ci-autofix-bot@users.noreply.github.com"
 
-            # Normalize & clean
-            sed -i 's/\r$//' patch.diff || true
-            sed -i '/^```.*$/d' patch.diff || true
-            sed -i '/^\+\+\+ b\/$/d;/^--- a\/$/d' patch.diff
+            # If generator wrote NOOP, skip cleanly
+            if grep -qx 'NOOP' patch.diff 2>/dev/null; then
+              echo "No usable diff; skipping apply."
+              echo "changed_files=0" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
 
-            # Basic diff shape sanity
-            grep -qE '^diff --git a/[^ ]+ b/[^ ]+' patch.diff || { echo "Malformed diff header"; exit 78; }
+            # Normalize & clean
+            sed -i 's/\r$//' patch.diff || true                             # CRLF -> LF
+            sed -i '1 s/^\xEF\xBB\xBF//' patch.diff || true                 # strip UTF-8 BOM
+            sed -i '/^```.*$/d' patch.diff || true                          # remove code fences
+
+            # Trim everything BEFORE the first 'diff --git' line
+            awk 'BEGIN{p=0} /^diff --git /{p=1} p{print}' patch.diff > patch.clean || true
+            if [ -s patch.clean ]; then mv patch.clean patch.diff; fi
+
+            # Basic diff shape sanity (more tolerant)
+            grep -qE '^diff --git a/.+ b/.+' patch.diff || { 
+              echo "Malformed diff header"; 
+              echo "First 20 lines for debug:"; sed -n '1,20p' patch.diff; 
+              exit 78; 
+            }
 
             # Ensure targets exist or are new (paired with /dev/null)
             while IFS= read -r line; do
