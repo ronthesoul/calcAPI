@@ -292,27 +292,66 @@ jobs:
             MODEL: ${{ env.GEMINI_MODEL }}
           run: |
             cat > gen_patch.py << 'PY'
-            import os
+            import os, re, sys
             from google import genai
-            client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+
+            API_KEY = os.environ["GEMINI_API_KEY"]
+            MODEL = os.environ.get("MODEL","gemini-2.5-flash")
+
+            def call_model(prompt: str) -> str:
+                client = genai.Client(api_key=API_KEY)
+                resp = client.models.generate_content(model=MODEL, contents=prompt)
+                return resp.text or ""
+
+            def extract_raw_diff(text: str) -> str:
+                # 1) If there's a fenced block, take its contents
+                m = re.search(r"```(?:diff|patch)?\s*\n(.*?)```", text, re.S|re.I)
+                if m:
+                    text = m.group(1).strip()
+                # 2) Trim to the first 'diff --git' if present later in the text
+                m = re.search(r"^diff --git .*$", text, re.M)
+                if m:
+                    text = text[m.start():].strip()
+                return text
+
             with open("prompt.txt","r",encoding="utf-8") as f:
-                prompt = f.read()
-            resp = client.models.generate_content(
-                model=os.environ.get("MODEL","gemini-2.5-flash"),
-                contents=prompt
-            )
-            text = resp.text or ""
-            for fence in ("```diff","```patch","```"):
-                if text.startswith(fence):
-                    text = text[len(fence):]
-            if text.endswith("```"):
-                text = text[:-3]
+                base_prompt = f.read()
+
+            # First attempt
+            text = extract_raw_diff(call_model(base_prompt)).strip()
+
+            # If it still doesn't start with 'diff --git', try a stricter second pass
+            if not text.startswith("diff --git "):
+                strict = (
+                    base_prompt
+                    + "\n\nIMPORTANT: Output ONLY a raw git unified diff that starts with"
+                    + " 'diff --git a/… b/…'. No commentary, no code fences, no prose."
+                )
+                text2 = extract_raw_diff(call_model(strict)).strip()
+                if text2.startswith("diff --git "):
+                    text = text2
+
+            # If still bad, declare NOOP and exit gracefully
+            if not text.startswith("diff --git "):
+                open("patch.diff","w",encoding="utf-8").write("NOOP\n")
+                print("Model produced no usable diff; wrote NOOP.")
+                sys.exit(0)
+
+            # Write sanitized diff
             with open("patch.diff","w",encoding="utf-8") as f:
-                f.write(text.strip()+"\n")
-            print("WROTE patch.diff ({} bytes)".format(len(text)))
+                f.write(text.rstrip() + "\n")
+            print(f"WROTE patch.diff ({len(text)} bytes)")
             PY
             python3 gen_patch.py
-            head -n 1 patch.diff | grep -q '^diff --git ' || (echo "Not a raw unified diff"; exit 78)
+
+            # If NOOP, short-circuit apply later by leaving patch as NOOP
+            if grep -q '^NOOP$' patch.diff; then
+              echo "no_usable_diff=true" >> $GITHUB_OUTPUT
+            else
+              echo "no_usable_diff=false" >> $GITHUB_OUTPUT
+              # Quick shape check
+              head -n 1 patch.diff | grep -q '^diff --git ' || (echo "Not a raw unified diff"; exit 78)
+            fi
 
         - name: Apply patch (robust)
           id: apply
