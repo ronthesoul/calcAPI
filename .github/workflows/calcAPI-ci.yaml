@@ -412,11 +412,13 @@ jobs:
             echo "changed_files=$CHANGED" >> "$GITHUB_OUTPUT"
 
         - name: Create autofix PR
+          id: cpr
           if: ${{ steps.apply.outputs.changed_files != '0' }}
           uses: peter-evans/create-pull-request@v6
           with:
-            token: ${{ secrets.GH_TOKEN }}   # PAT with repo + PR write perms
+            token: ${{ secrets.GH_TOKEN }}
             branch: autofix/${{ github.run_id }}
+            base: main
             title: "Autofix: CI failure remediation (run #${{ github.run_number }})"
             commit-message: "Autofix: apply Gemini-generated patch to fix CI failures"
             body: |
@@ -426,11 +428,17 @@ jobs:
             labels: autofix, ci
             signoff: true
             add-paths: |
-             **/*.go
-             .github/workflows/**
-             Dockerfile
-             go.mod
-             go.sum
+              **/*.go
+              .github/workflows/**
+              Dockerfile
+              go.mod
+              go.sum
+
+        - name: Show PR info
+          if: ${{ steps.apply.outputs.changed_files != '0' }}
+          run: |
+            echo "PR number: ${{ steps.cpr.outputs.pull-request-number }}"
+            echo "PR url:    ${{ steps.cpr.outputs.pull-request-url }}"
 
 
      
