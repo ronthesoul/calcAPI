@@ -314,18 +314,61 @@ jobs:
             python3 gen_patch.py
             head -n 1 patch.diff | grep -q '^diff --git ' || (echo "Not a raw unified diff"; exit 78)
 
-
-        - name: Apply patch (stage only real source files)
+        - name: Apply patch (robust)
           id: apply
           shell: bash
           run: |
             set -euo pipefail
             git config user.name  "ci-autofix-bot"
             git config user.email "ci-autofix-bot@users.noreply.github.com"
-            # (your apply logic here) …
-            # Stage only tracked source changes, exclude temp files
+
+            # Normalize line endings / stray code fences just in case
+            sed -i 's/\r$//' patch.diff || true
+            sed -i '/^```.*$/d' patch.diff || true
+
+            # Drop invalid empty path markers the model might emit
+            sed -i '/^\+\+\+ b\/$/d;/^--- a\/$/d' patch.diff
+
+            # Basic diff shape sanity
+            grep -qE '^diff --git a/[^ ]+ b/[^ ]+' patch.diff || { echo "Malformed diff header"; exit 78; }
+
+            # Path sanity: ensure every target either exists or is a new file paired with /dev/null source
+            while IFS= read -r line; do
+              p="${line#+++ b/}"
+              [ -z "$p" ] && continue
+              if ! git ls-files --error-unmatch "$p" >/dev/null 2>&1; then
+                if ! grep -qE "^--- a/$p$|^--- /dev/null$" patch.diff; then
+                  echo "Path in patch doesn't match repo file list and not marked new: $p"
+                  echo "Repo files:"; git ls-files | sed 's/^/  /'
+                  exit 78
+                fi
+              fi
+            done < <(grep -E '^\+\+\+ b/' patch.diff)
+
+            # Try apply (normal), then 3-way, then GNU patch with fuzz
+            if git apply --index --whitespace=fix patch.diff; then
+              echo "Applied with git apply (normal)."
+            elif git apply --index --3way --whitespace=fix patch.diff; then
+              echo "Applied with git apply (--3way)."
+            else
+              echo "git apply failed; trying GNU patch with fuzz."
+              sudo apt-get update -y && sudo apt-get install -y patch || true
+              if patch -p0 --fuzz=3 -i patch.diff; then
+                git add -A
+              else
+                echo "Patch still failed. Showing rejects:"
+                find . -name "*.rej" -maxdepth 5 -print -exec tail -n +1 {} \; || true
+                exit 1
+              fi
+            fi
+
+            # Stage all modified files, but drop temp/autofix artifacts
             git add -A
             git reset artifacts/ patch.diff prompt.txt gen_patch.py -- || true
+            git checkout -- artifacts/ patch.diff prompt.txt gen_patch.py 2>/dev/null || true
+            rm -f patch.diff prompt.txt gen_patch.py || true
+            rm -rf artifacts || true
+
             CHANGED=$(git status --porcelain | wc -l)
             echo "changed_files=$CHANGED" >> "$GITHUB_OUTPUT"
 
@@ -333,16 +376,22 @@ jobs:
           if: ${{ steps.apply.outputs.changed_files != '0' }}
           uses: peter-evans/create-pull-request@v6
           with:
-            token: ${{ secrets.GH_TOKEN }}   # <-- PAT here
+            token: ${{ secrets.GH_TOKEN }}   # PAT with repo + PR write perms
             branch: autofix/${{ github.run_id }}
             title: "Autofix: CI failure remediation (run #${{ github.run_number }})"
             commit-message: "Autofix: apply Gemini-generated patch to fix CI failures"
             body: |
               Auto-created after CI failure.
               Model: ${{ env.GEMINI_MODEL }}
-              Inputs in `artifacts/` (not committed).
+              Temporary prompt/patch/artifacts were excluded.
             labels: autofix, ci
             signoff: true
+            add-paths: |
+             **/*.go
+             .github/workflows/**
+             Dockerfile
+             go.mod
+             go.sum
 
 
      
