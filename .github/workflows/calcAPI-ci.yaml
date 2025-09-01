@@ -224,8 +224,7 @@ jobs:
         - name: Install tools
           run: |
             sudo apt-get update -y
-            sudo apt-get install -y jq perl file python3-pip
-            python3 -m pip install --upgrade "google-genai>=0.3.0"
+            sudo apt-get install -y jq perl file python3-pip patch
 
         - name: Restore CI logs
           uses: actions/cache/restore@v4
@@ -267,8 +266,25 @@ jobs:
             cat artifacts/docker-build.log 2>/dev/null >> prompt.txt || true
             echo -e "\n=== HEALTH ==="         >> prompt.txt
             sed -e 's/^/HEALTH: /' artifacts/health.json 2>/dev/null >> prompt.txt || true
-            wc -c prompt.txt || true
 
+        - name: Append repo snapshot to prompt
+          shell: bash
+          run: |
+            {
+              echo -e "\n=== REPO FILE LIST ==="
+              git ls-files
+              echo -e "\n=== CURRENT FILE CONTENTS (only .go and workflow files) ==="
+              git ls-files | grep -E '\.go$|^\.github/workflows/' | while read -r f; do
+                echo -e "\n--- FILE: $f ---"
+                sed -n '1,200p' "$f"
+              done
+              echo -e "\n[NOTE] Use EXACT paths as shown by git ls-files. Do not invent new paths."
+            } >> prompt.txt
+            wc -c prompt.txt
+
+        - name: Install Gemini SDK
+          run: |
+            python3 -m pip install --upgrade "google-genai>=0.3.0"
 
         - name: Generate unified diff with Gemini
           id: gen
@@ -276,39 +292,63 @@ jobs:
             MODEL: ${{ env.GEMINI_MODEL }}
           run: |
             cat > gen_patch.py << 'PY'
-            import os, sys
+            import os
             from google import genai
             client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
             with open("prompt.txt","r",encoding="utf-8") as f:
                 prompt = f.read()
-            resp = client.models.generate_content(model=os.environ.get("MODEL","gemini-2.5-flash"),
-                                                  contents=prompt)
+            resp = client.models.generate_content(
+                model=os.environ.get("MODEL","gemini-2.5-flash"),
+                contents=prompt
+            )
             text = resp.text or ""
-            # Strip possible code fences accidentally returned by the model
             for fence in ("```diff","```patch","```"):
-                if text.startswith(fence): text = text[len(fence):]
-            if text.endswith("```"): text = text[:-3]
-            open("patch.diff","w",encoding="utf-8").write(text.strip()+"\n")
+                if text.startswith(fence):
+                    text = text[len(fence):]
+            if text.endswith("```"):
+                text = text[:-3]
+            with open("patch.diff","w",encoding="utf-8") as f:
+                f.write(text.strip()+"\n")
             print("WROTE patch.diff ({} bytes)".format(len(text)))
             PY
-                      python3 gen_patch.py
-                      # Sanity check looks like a raw git diff
-                      head -n 1 patch.diff | grep -q '^diff --git ' || (echo "Not a raw unified diff"; exit 78)
+            python3 gen_patch.py
+            head -n 1 patch.diff | grep -q '^diff --git ' || (echo "Not a raw unified diff"; exit 78)
 
-        - name: Apply patch
+        - name: Apply patch (robust)
           id: apply
+          shell: bash
           run: |
-            git config user.name "ci-autofix-bot"
+            set -euo pipefail
+            git config user.name  "ci-autofix-bot"
             git config user.email "ci-autofix-bot@users.noreply.github.com"
-            # Try applying; if it fails due to CRLF etc., normalize and retry
-            if ! git apply --index --reject --whitespace=fix patch.diff; then
-              sed -i 's/\r$//' patch.diff || true
-              dos2unix patch.diff 2>/dev/null || true
-              git checkout -- .
-              git apply --index --reject --whitespace=fix patch.diff || exit 1
+
+            awk '/^\+\+\+ b\//{print $3}' patch.diff | sed 's|^b/||' | while read -r p; do
+              if ! git ls-files --error-unmatch "$p" >/dev/null 2>&1; then
+                if ! grep -qE "^--- a/$p$|^--- /dev/null$" patch.diff; then
+                  echo "Path in patch doesn't match repo file list: $p"
+                  git ls-files | sed 's/^/  /'
+                  exit 78
+                fi
+              fi
+            done
+
+            if git apply --index --whitespace=fix patch.diff; then
+              echo "Applied with git apply (normal)."
+            elif git apply --index --3way --whitespace=fix patch.diff; then
+              echo "Applied with git apply (--3way)."
+            else
+              echo "git apply failed; trying GNU patch with fuzz."
+              if patch -p0 --fuzz=3 -i patch.diff; then
+                git add -A
+              else
+                echo "Patch still failed. Showing rejects:"
+                find . -name "*.rej" -maxdepth 5 -print -exec tail -n +1 {} \; || true
+                exit 1
+              fi
             fi
+
             CHANGED=$(git status --porcelain | wc -l)
-            echo "changed_files=$CHANGED" >> $GITHUB_OUTPUT
+            echo "changed_files=$CHANGED" >> "$GITHUB_OUTPUT"
 
         - name: Create autofix PR
           if: ${{ steps.apply.outputs.changed_files != '0' }}
@@ -318,12 +358,15 @@ jobs:
             title: "Autofix: CI failure remediation (run #${{ github.run_number }})"
             commit-message: "Autofix: apply Gemini-generated patch to fix CI failures"
             body: |
-              This PR was created automatically after a CI failure.
-              - Model: ${{ env.GEMINI_MODEL }}
-              - Run: #${{ github.run_number }}
-              - Inputs stored in `artifacts/` and `prompt.txt`.
+              Auto-created after CI failure.
+              Model: ${{ env.GEMINI_MODEL }}
+              Inputs in `artifacts/` + `prompt.txt`.
             labels: autofix, ci
             signoff: true
-            draft: false
+
+        - name: No changes to propose
+          if: ${{ steps.apply.outputs.changed_files == '0' }}
+          run: echo "Gemini produced no applicable changes; skipping PR."
+
 
      
