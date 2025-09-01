@@ -245,8 +245,8 @@ jobs:
 
             HARD CONSTRAINTS
             ----------------
-            1) Output MUST be a RAW git unified diff — *no* code fences, *no* prose, *no* markdown.
-            2) First line MUST start with:  diff --git a/… b/…
+            1) Output MUST be a RAW git unified diff — no code fences, no prose, no markdown.
+            2) First line MUST start with:  diff --git a/... b/...
             3) Each file section MUST include:
               - diff --git a/P b/P
               - index <oldsha>..<newsha> 100644
@@ -258,16 +258,15 @@ jobs:
             === LINT ===
             EOF
             cat artifacts/lint.log  2>/dev/null >> prompt.txt || true
-            echo -e "\n=== BUILD ==="          >> prompt.txt
+            echo -e "\n=== BUILD ==="        >> prompt.txt
             cat artifacts/build.log 2>/dev/null >> prompt.txt || true
-            echo -e "\n=== TEST ==="           >> prompt.txt
+            echo -e "\n=== TEST ==="         >> prompt.txt
             cat artifacts/test.log  2>/dev/null >> prompt.txt || true
-            echo -e "\n=== DOCKER BUILD ==="   >> prompt.txt
+            echo -e "\n=== DOCKER BUILD ===" >> prompt.txt
             cat artifacts/docker-build.log 2>/dev/null >> prompt.txt || true
-            echo -e "\n=== HEALTH ==="         >> prompt.txt
+            echo -e "\n=== HEALTH ==="       >> prompt.txt
             sed -e 's/^/HEALTH: /' artifacts/health.json 2>/dev/null >> prompt.txt || true
-            Please reply with a git diff file that would be able to easiely git apply 
-            and change the fixes stated 
+            echo 'Please reply with a git diff that can be applied with "git apply" to fix the issues above.' >> prompt.txt
 
         - name: Run AI inference (generate unified diff)
           id: inference
