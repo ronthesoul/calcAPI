@@ -23,10 +23,15 @@ jobs:
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
       NOTIFY: .github/workflows/notify.sh
       IMAGE: m4gapower/calcapi
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GH_TOKEN }}
+
 
       - name: Set up Go
         uses: actions/setup-go@v5
