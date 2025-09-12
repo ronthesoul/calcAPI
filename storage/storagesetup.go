@@ -2,6 +2,8 @@ package storage
 
 import (
 	"encoding/csv"
+	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -110,4 +112,41 @@ func PurgeExpired() error {
 	}
 
 	return os.Rename(tmp, APICSV)
+}
+
+func SelfTest() error {
+	// 1) Exists & stat
+	fi, err := os.Stat(APICSV)
+	if err != nil {
+		return fmt.Errorf("stat: %w", err)
+	}
+	if fi.IsDir() {
+		return errors.New("path is a directory, not a file")
+	}
+
+	// 2) Open RW (ensures permissions)
+	f, err := os.OpenFile(APICSV, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("open RW: %w", err)
+	}
+	defer f.Close()
+
+	// 3) Lightweight write-then-truncate (prove write works without polluting)
+	off, _ := f.Seek(0, os.SEEK_END)
+	testBytes := []byte(fmt.Sprintf("#selftest %d\n", time.Now().UnixNano()))
+	if _, err := f.Write(testBytes); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	// rollback
+	if err := f.Truncate(off); err != nil {
+		return fmt.Errorf("truncate: %w", err)
+	}
+
+	// 4) Optional: simple read (prove read works)
+	buf := make([]byte, 1)
+	if _, err := f.ReadAt(buf, 0); err != nil && !errors.Is(err, os.ErrClosed) {
+		// ignore EOF on empty files
+	}
+
+	return nil
 }

@@ -25,6 +25,12 @@ func WithRequestLogger(zl *zap.Logger) gin.HandlerFunc {
 
 func AccessLog(zl *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
+
+		if p := c.Request.URL.Path; p == "/metrics" {
+			c.Next()
+			return
+		}
+
 		start := time.Now()
 		c.Next()
 

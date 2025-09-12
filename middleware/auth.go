@@ -10,7 +10,7 @@ import (
 func APIKeyAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 
-		if c.FullPath() == "/token" || c.FullPath() == "/health" {
+		if c.FullPath() == "/token" || c.FullPath() == "/healthz" || c.FullPath() == "/metrics" || c.FullPath() == "/readyz" {
 			c.Next()
 			return
 		}
