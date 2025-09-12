@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
+	rand "math/rand/v2" // Go 1.22+: no seeding needed
 	"net/http"
 	"os/signal"
 	"strings"
@@ -71,22 +71,20 @@ func looksInvalid(body []byte) bool {
 }
 
 func Start(ctx context.Context) {
-	rand.Seed(time.Now().UnixNano())
 	var token string
+	ops := []string{"add", "sub", "multiply", "divide"}
 
 	t := time.NewTicker(1 * time.Second)
 	defer t.Stop()
-
-	ops := []string{"add", "sub", "multiply", "divide"}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			op := ops[rand.Intn(len(ops))]
-			a := rand.Intn(100) + 1
-			b := rand.Intn(100) + 1
+			op := ops[rand.IntN(len(ops))]
+			a := rand.IntN(100) + 1
+			b := rand.IntN(100) + 1
 			if op == "divide" && b == 0 {
 				b = 1
 			}
