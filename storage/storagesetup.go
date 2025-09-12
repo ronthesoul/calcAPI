@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"time"
@@ -132,20 +133,21 @@ func SelfTest() error {
 	defer f.Close()
 
 	// 3) Lightweight write-then-truncate (prove write works without polluting)
-	off, _ := f.Seek(0, os.SEEK_END)
+	off, _ := f.Seek(0, io.SeekEnd) // <- use io.SeekEnd
 	testBytes := []byte(fmt.Sprintf("#selftest %d\n", time.Now().UnixNano()))
 	if _, err := f.Write(testBytes); err != nil {
 		return fmt.Errorf("write: %w", err)
 	}
-	// rollback
 	if err := f.Truncate(off); err != nil {
 		return fmt.Errorf("truncate: %w", err)
 	}
 
-	// 4) Optional: simple read (prove read works)
+	// 4) Simple read (prove read works) — validate unexpected errors only
 	buf := make([]byte, 1)
-	if _, err := f.ReadAt(buf, 0); err != nil && !errors.Is(err, os.ErrClosed) {
-		// ignore EOF on empty files
+	if _, err := f.ReadAt(buf, 0); err != nil &&
+		!errors.Is(err, io.EOF) && // empty file is OK
+		!errors.Is(err, os.ErrClosed) { // benign in some races
+		return fmt.Errorf("readat: %w", err)
 	}
 
 	return nil
