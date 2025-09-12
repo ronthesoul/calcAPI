@@ -130,8 +130,8 @@ jobs:
           docker run -d --rm -p 8080:8080 --name mycalc_test "$IMAGE:latest"
           mkdir -p artifacts
           for i in {1..10}; do
-            if curl -fsS --max-time 2 http://localhost:8080/health | jq -e -r '.status=="ok"' >/dev/null; then
-              HEALTH_JSON=$(curl -fsS http://localhost:8080/health || echo '{}')
+            if curl -fsS --max-time 2 http://localhost:8080/healthz | jq -e -r '.status=="ok"' >/dev/null; then
+              HEALTH_JSON=$(curl -fsS http://localhost:8080/healthz || echo '{}')
               echo "$HEALTH_JSON" > artifacts/health.json
               SHORT=$(echo "$HEALTH_JSON" | jq -c .)
               "$NOTIFY" "Step - Run & Test container ✅ Success (on :8080)\nHealth: \`\`\`${SHORT}\`\`\`" "$SLACK_WEBHOOK"
