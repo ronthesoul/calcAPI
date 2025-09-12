@@ -19,15 +19,22 @@ var (
 	)
 )
 
+func init() { // <- register once
+	prometheus.MustRegister(HTTPReqs, HTTPDur)
+}
+
 func PrometheusMetrics() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
 		route := c.FullPath()
 		if route == "" {
-			route = c.Request.URL.Path
-		}
-		HTTPReqs.WithLabelValues(c.Request.Method, route, strconv.Itoa(c.Writer.Status())).Inc()
-		HTTPDur.WithLabelValues(c.Request.Method, route, strconv.Itoa(c.Writer.Status())).Observe(time.Since(start).Seconds())
+			route = "unknown"
+		} // avoid path-based cardinality
+		status := strconv.Itoa(c.Writer.Status())
+		method := c.Request.Method
+
+		HTTPReqs.WithLabelValues(method, route, status).Inc()
+		HTTPDur.WithLabelValues(method, route, status).Observe(time.Since(start).Seconds())
 	}
 }

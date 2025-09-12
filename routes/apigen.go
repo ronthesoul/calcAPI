@@ -19,7 +19,7 @@ func Apigen(c *gin.Context) {
 		apikey[i] = chars[rand.Intn(len(chars))]
 	}
 
-	if err := s.AppendKey(string(apikey), 5*time.Minute); err != nil {
+	if err := s.AppendKey(string(apikey), 1*time.Hour); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
