@@ -19,7 +19,7 @@ var (
 	)
 )
 
-func init() { // <- register once
+func init() {
 	prometheus.MustRegister(HTTPReqs, HTTPDur)
 }
 
@@ -30,7 +30,7 @@ func PrometheusMetrics() gin.HandlerFunc {
 		route := c.FullPath()
 		if route == "" {
 			route = "unknown"
-		} // avoid path-based cardinality
+		}
 		status := strconv.Itoa(c.Writer.Status())
 		method := c.Request.Method
 

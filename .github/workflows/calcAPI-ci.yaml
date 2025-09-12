@@ -178,6 +178,68 @@ jobs:
           docker push "$IMAGE:${new_tag}"
           "$NOTIFY" "Step - Push image(s) ✅ $IMAGE:latest & $IMAGE:${new_tag}" "$SLACK_WEBHOOK"
 
+        
+
+      - name: Locate calcapi deployment file
+        id: dep
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE=""
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+          for f in $(git ls-files 'deployment/*.y*ml'); do
+            if yq -e '.kind=="Deployment" and .metadata.name=="calcapi"' "$f" >/dev/null 2>&1; then
+              FILE="$f"; break
+            fi
+          done
+          if [ -z "$FILE" ]; then
+            echo "No calcapi Deployment found under deployment/" >&2
+            exit 1
+          fi
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+          echo "Found: $FILE"
+
+      - name: Bump image tag in calcapi deployment (ArgoCD)
+        shell: bash
+        run: |
+          DEPLOYFILE="${{ steps.dep.outputs.file }}"
+          "$NOTIFY" "Starting Step - Update Deployment ($DEPLOYFILE)" "$SLACK_WEBHOOK"
+          yq -i '
+            (select(.kind=="Deployment" and .metadata.name=="calcapi")
+             | .spec.template.spec.containers[]
+             | select(.name=="calcapi")
+             | .image) = env(IMAGE) + ":" + env(new_tag)
+          ' "$DEPLOYFILE"
+
+          # verify
+          yq -e '
+            select(.kind=="Deployment" and .metadata.name=="calcapi")
+            | .spec.template.spec.containers[]
+            | select(.name=="calcapi") | .image == env(IMAGE) + ":" + env(new_tag)
+          ' "$DEPLOYFILE" >/dev/null \
+          && "$NOTIFY" "Step - Update Deployment ✅ Success ($IMAGE:${new_tag})" "$SLACK_WEBHOOK" \
+          || { "$NOTIFY" "Step - Update Deployment ❌ Failed" "$SLACK_WEBHOOK"; exit 1; }
+
+      - name: Commit & push manifest changes (ArgoCD sync)
+        shell: bash
+        run: |
+          "$NOTIFY" "Starting Step - Commit & push repo changes" "$SLACK_WEBHOOK"
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git add "${{ steps.dep.outputs.file }}"
+          if git diff --cached --quiet; then
+            "$NOTIFY" "Step - Commit & push ✅ No changes to commit" "$SLACK_WEBHOOK"
+            exit 0
+          fi
+          if git commit -m "chore(ci): bump calcapi image to ${IMAGE}:${{ env.new_tag }}" && git push; then
+            "$NOTIFY" "Step - Commit & push ✅ Success" "$SLACK_WEBHOOK"
+          else
+            "$NOTIFY" "Step - Commit & push ❌ Failed" "$SLACK_WEBHOOK"
+            exit 1
+          fi
+
       - name: Show changed files (logs) + notify
         shell: bash
         run: |
