@@ -72,15 +72,12 @@ resources:
     cpu: "1"
 
 # Probes (numeric port as in your manifest)
-livenessProbe:
-  httpGet:
+probes:
+  port: 8080
+  liveness:
     path: /healthz
-    port: 8080
-
-readinessProbe:
-  httpGet:
+  readiness:
     path: /readyz
-    port: 8080
 
 autoscaling:
   enabled: false
