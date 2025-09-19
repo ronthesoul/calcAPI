@@ -45,7 +45,7 @@ func main() {
 	r.GET("/healthz", routes.HealthCheck)
 	r.GET("/readyz", routes.Readyz)
 
-	//  PROTECTED API group
+	//   PROTECTED API group
 	api := r.Group("/")
 	api.Use(mw.APIKeyAuth(), mw.SecurityHeaders(), mw.CORS(), mw.RateLimitPerIP(5, 15))
 	api.GET("/add/:a/:b", routes.Add)
