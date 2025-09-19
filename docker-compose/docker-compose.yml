@@ -1,0 +1,26 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: calcapi:local
+    container_name: calcapi
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  traffic-gen:
+    build:
+      context: ..
+      dockerfile: traffic-gen/Dockerfile
+    image: calcapi-traffic:local
+    container_name: calcapi-traffic
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
