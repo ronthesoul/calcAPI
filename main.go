@@ -28,7 +28,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// background cleanup
+	//  background cleanup
 	go func() {
 		t := time.NewTicker(1 * time.Hour)
 		defer t.Stop()

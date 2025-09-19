@@ -80,21 +80,17 @@ jobs:
             exit 1
           fi
 
-      - name: Early Build
+      - name: Early Build (produce binary)
         shell: bash
         run: |
-          set +e
-          "$NOTIFY" "Starting Step - Early Build" "$SLACK_WEBHOOK"
+          set -e
+          "$NOTIFY" "Starting Step - Early Build (binary)" "$SLACK_WEBHOOK"
           mkdir -p artifacts
-          go build -v ./... 2>&1 | tee artifacts/build.log
-          STATUS=${PIPESTATUS[0]}
-          OUTPUT=$(cat artifacts/build.log)
-          if [ $STATUS -eq 0 ]; then
-            "$NOTIFY" "Step - Early Build ✅ Success" "$SLACK_WEBHOOK"
-          else
-            "$NOTIFY" "Step - Early Build ❌ Failed\n\`\`\`$OUTPUT\`\`\`" "$SLACK_WEBHOOK"
-            exit 1
-          fi
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -ldflags="-s -w" -o artifacts/calcapi-linux-amd64 .
+          sha256sum artifacts/calcapi-linux-amd64 | tee artifacts/calcapi-linux-amd64.sha256
+          "$NOTIFY" "Step - Early Build ✅ artifacts/calcapi-linux-amd64 ready" "$SLACK_WEBHOOK"
+
 
       - name: Test
         shell: bash
@@ -166,27 +162,7 @@ jobs:
           echo "new_tag=$NEW_TAG" >> "$GITHUB_ENV"
           "$NOTIFY" "Step - Compute tag ✅ $BASE → $NEW_TAG" "$SLACK_WEBHOOK"
 
-      # NEW: reuse the built image to extract the binary; no extra Go build
-      - name: Extract calcapi binary from Docker image
-        shell: bash
-        run: |
-          "$NOTIFY" "Starting Step - Extract calcapi binary from image" "$SLACK_WEBHOOK"
-          mkdir -p artifacts
-          CID=$(docker create "$IMAGE:latest")
-          CANDIDATES="/calcapi /app/calcapi /usr/local/bin/calcapi /bin/calcapi /calcAPI /app/calcAPI /usr/local/bin/calcAPI"
-          FOUND=""
-          for p in $CANDIDATES; do
-            if docker cp "$CID:$p" artifacts/calcapi-linux-amd64 2>/dev/null; then FOUND="$p"; break; fi
-          done
-          docker rm "$CID" >/dev/null
-          if [ -z "$FOUND" ]; then
-            "$NOTIFY" "Step - Extract binary ❌ Failed (binary not found in image; set a known path in Dockerfile)" "$SLACK_WEBHOOK"
-            exit 1
-          fi
-          chmod +x artifacts/calcapi-linux-amd64
-          sha256sum artifacts/calcapi-linux-amd64 | tee artifacts/calcapi-linux-amd64.sha256
-          "$NOTIFY" "Step - Extract binary ✅ from path: $FOUND" "$SLACK_WEBHOOK"
-
+    
       - name: Tag image with NEW_TAG
         shell: bash
         run: |
@@ -202,6 +178,16 @@ jobs:
           docker push "$IMAGE:latest"
           docker push "$IMAGE:${new_tag}"
           "$NOTIFY" "Step - Push image(s) ✅ $IMAGE:latest & $IMAGE:${new_tag}" "$SLACK_WEBHOOK"
+
+      - name: Upload calcapi binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: calcapi-binary-${{ env.new_tag || github.sha }}
+          path: |
+            artifacts/calcapi-linux-amd64
+            artifacts/calcapi-linux-amd64.sha256
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload calcapi artifact
         uses: actions/upload-artifact@v4
