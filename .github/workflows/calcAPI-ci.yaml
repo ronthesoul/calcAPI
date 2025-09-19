@@ -210,6 +210,7 @@ jobs:
         shell: bash
         run: |
           DEPLOYFILE="${{ steps.dep.outputs.file }}"
+          HELMFILE="helm/calcapi/values.yaml"
           "$NOTIFY" "Starting Step - Update Deployment ($DEPLOYFILE)" "$SLACK_WEBHOOK"
           yq -i '
             (select(.kind=="Deployment" and .metadata.name=="calcapi")
@@ -218,7 +219,18 @@ jobs:
              | .image) = env(IMAGE) + ":" + env(new_tag)
           ' "$DEPLOYFILE"
 
-          # verify
+          yq -i '
+            .image = (.image // {}) |
+            .image.repository = (env(IMAGE) | sub(":(?=[^/]+$)"; "")) |
+            .image.tag        = env(new_tag) |
+            .image.pullPolicy = (.image.pullPolicy // "IfNotPresent")
+          ' "$HELMFILE"
+
+          yq -e '
+            (.image.repository == (env(IMAGE) | sub(":(?=[^/]+$)"; "")))
+            and (.image.tag == env(new_tag))
+          ' "$HELMFILE" >/dev/null
+
           yq -e '
             select(.kind=="Deployment" and .metadata.name=="calcapi")
             | .spec.template.spec.containers[]
@@ -233,7 +245,7 @@ jobs:
           "$NOTIFY" "Starting Step - Commit & push repo changes" "$SLACK_WEBHOOK"
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
-          git add "${{ steps.dep.outputs.file }}"
+          git add "${{ steps.dep.outputs.file }}" helm/calcapi/values.yaml
           if git diff --cached --quiet; then
             "$NOTIFY" "Step - Commit & push ✅ No changes to commit" "$SLACK_WEBHOOK"
             exit 0
