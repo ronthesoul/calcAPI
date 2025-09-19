@@ -27,7 +27,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: calcapi
-          image: m4gapower/calcapi:1.14.0
+          image: m4gapower/calcapi:1.16.0
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
