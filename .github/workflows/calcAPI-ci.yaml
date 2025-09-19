@@ -32,7 +32,6 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GH_TOKEN }}
 
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -167,6 +166,27 @@ jobs:
           echo "new_tag=$NEW_TAG" >> "$GITHUB_ENV"
           "$NOTIFY" "Step - Compute tag ✅ $BASE → $NEW_TAG" "$SLACK_WEBHOOK"
 
+      # NEW: reuse the built image to extract the binary; no extra Go build
+      - name: Extract calcapi binary from Docker image
+        shell: bash
+        run: |
+          "$NOTIFY" "Starting Step - Extract calcapi binary from image" "$SLACK_WEBHOOK"
+          mkdir -p artifacts
+          CID=$(docker create "$IMAGE:latest")
+          CANDIDATES="/calcapi /app/calcapi /usr/local/bin/calcapi /bin/calcapi /calcAPI /app/calcAPI /usr/local/bin/calcAPI"
+          FOUND=""
+          for p in $CANDIDATES; do
+            if docker cp "$CID:$p" artifacts/calcapi-linux-amd64 2>/dev/null; then FOUND="$p"; break; fi
+          done
+          docker rm "$CID" >/dev/null
+          if [ -z "$FOUND" ]; then
+            "$NOTIFY" "Step - Extract binary ❌ Failed (binary not found in image; set a known path in Dockerfile)" "$SLACK_WEBHOOK"
+            exit 1
+          fi
+          chmod +x artifacts/calcapi-linux-amd64
+          sha256sum artifacts/calcapi-linux-amd64 | tee artifacts/calcapi-linux-amd64.sha256
+          "$NOTIFY" "Step - Extract binary ✅ from path: $FOUND" "$SLACK_WEBHOOK"
+
       - name: Tag image with NEW_TAG
         shell: bash
         run: |
@@ -183,7 +203,15 @@ jobs:
           docker push "$IMAGE:${new_tag}"
           "$NOTIFY" "Step - Push image(s) ✅ $IMAGE:latest & $IMAGE:${new_tag}" "$SLACK_WEBHOOK"
 
-        
+      - name: Upload calcapi artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: calcapi-binary-${{ env.new_tag }}
+          path: |
+            artifacts/calcapi-linux-amd64
+            artifacts/calcapi-linux-amd64.sha256
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Locate calcapi deployment file
         id: dep
@@ -213,15 +241,14 @@ jobs:
           "$NOTIFY" "Starting Step - Update Deployment ($DEPLOYFILE)" "$SLACK_WEBHOOK"
           yq -i '
             (select(.kind=="Deployment" and .metadata.name=="calcapi")
-             | .spec.template.spec.containers[]
+             | .spec.template.spec.containers[] 
              | select(.name=="calcapi")
              | .image) = env(IMAGE) + ":" + env(new_tag)
           ' "$DEPLOYFILE"
 
-          # verify
           yq -e '
             select(.kind=="Deployment" and .metadata.name=="calcapi")
-            | .spec.template.spec.containers[]
+            | .spec.template.spec.containers[] 
             | select(.name=="calcapi") | .image == env(IMAGE) + ":" + env(new_tag)
           ' "$DEPLOYFILE" >/dev/null \
           && "$NOTIFY" "Step - Update Deployment ✅ Success ($IMAGE:${new_tag})" "$SLACK_WEBHOOK" \
@@ -233,7 +260,7 @@ jobs:
           "$NOTIFY" "Starting Step - Commit & push repo changes" "$SLACK_WEBHOOK"
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
-          git add "${{ steps.dep.outputs.file }}" 
+          git add "${{ steps.dep.outputs.file }}"
           if git diff --cached --quiet; then
             "$NOTIFY" "Step - Commit & push ✅ No changes to commit" "$SLACK_WEBHOOK"
             exit 0
@@ -262,32 +289,23 @@ jobs:
         run: |
           set -euo pipefail
           "$NOTIFY" "📦 Starting Step - Helm chart build for ${NEW_TAG}" "$SLACK_WEBHOOK"
-
-          # Ensure yq exists
           command -v yq >/dev/null || {
             sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
             sudo chmod +x /usr/local/bin/yq
           }
-
           "$NOTIFY" "🔧 Updating Chart.yaml and values.yaml" "$SLACK_WEBHOOK"
           yq -i '.appVersion = strenv(NEW_TAG)' "$CHART_DIR/Chart.yaml"
-
           CURR_VER=$(yq -r '.version' "$CHART_DIR/Chart.yaml")
           IFS='.' read -r MAJ MIN PAT <<< "${CURR_VER:-0.1.0}"
           NEW_VER="${MAJ}.$((MIN+1)).0"
           yq -i ".version = \"${NEW_VER}\"" "$CHART_DIR/Chart.yaml"
-
           yq -i ".image.repository = strenv(IMAGE_REPO) | .image.tag = strenv(NEW_TAG)" "$CHART_DIR/values.yaml"
-
           "$NOTIFY" "🔍 Linting Helm chart" "$SLACK_WEBHOOK"
           helm lint "$CHART_DIR"
-
           "$NOTIFY" "📦 Packaging Helm chart" "$SLACK_WEBHOOK"
           mkdir -p artifacts
           helm package "$CHART_DIR" -d artifacts
-
           PKG_FILE=$(ls artifacts/*.tgz | head -n1)
-
           if [ -n "${GHCR_TOKEN:-}" ]; then
             "$NOTIFY" "📤 Pushing Helm chart to OCI registry" "$SLACK_WEBHOOK"
             echo "$GHCR_TOKEN" | helm registry login ghcr.io -u "${OWNER}" --password-stdin
@@ -315,10 +333,6 @@ jobs:
             exit 1
           fi
 
-
-
-
-
       - name: Show changed files (logs) + notify
         shell: bash
         run: |
@@ -335,18 +349,8 @@ jobs:
         run: |
           "$NOTIFY" "🚀 Pipeline completed successfully!" "$SLACK_WEBHOOK"
 
-
       - name: Final pipeline failure
         if: failure()
         shell: bash
         run: |
           "$NOTIFY" "🔥 Pipeline failed!" "$SLACK_WEBHOOK"
-
-  
-
-
-
-        
-
-
-     
