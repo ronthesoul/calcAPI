@@ -4,7 +4,7 @@ replicaCount: 1
 image:
   repository: m4gapower/calcapi
   pullPolicy: IfNotPresent
-  tag: "1.17.0" # CI can overwrite this
+  tag: "1.18.0" # CI can overwrite this
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
