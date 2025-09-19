@@ -1,21 +1,15 @@
 # Default values for calcapi.
 
 replicaCount: 1
-
 image:
   repository: m4gapower/calcapi
   pullPolicy: IfNotPresent
-  tag: "1.13.0" # CI can overwrite this
-
+  tag: "1.14.0" # CI can overwrite this
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
-
-
-
 podAnnotations: {}
 podLabels: {}
-
 # Pod-level security context
 podSecurityContext:
   seccompProfile:
@@ -23,19 +17,15 @@ podSecurityContext:
   runAsUser: 1001
   runAsGroup: 1001
   runAsNonRoot: true
-
 # Container-level security context
 securityContext:
   allowPrivilegeEscalation: false
   privileged: false
-
 terminationGracePeriodSeconds: 600
-
 service:
   type: ClusterIP
   port: 8080
   targetPort: 8080
-
 ingress:
   enabled: false
   className: ""
@@ -46,7 +36,6 @@ ingress:
         - path: /
           pathType: ImplementationSpecific
   tls: []
-
 httpRoute:
   enabled: false
   annotations: {}
@@ -60,14 +49,12 @@ httpRoute:
         - path:
             type: PathPrefix
             value: /headers
-
 resources:
   limits:
     memory: "500Mi"
   requests:
     memory: "500Mi"
     cpu: "1"
-
 probes:
   port: 8080
   liveness:
@@ -82,19 +69,16 @@ probes:
     periodSeconds: 5
     timeoutSeconds: 2
     failureThreshold: 3
-
 autoscaling:
   enabled: false
   minReplicas: 1
   maxReplicas: 100
   targetCPUUtilizationPercentage: 80
-
 # NEW: writable working dir + CSV path
 containerWorkingDir: /data
 extraEnv:
   - name: CALCAPI_KEYS_PATH
     value: /data/API.csv
-
 # NEW: mount a writable volume at /data
 volumes:
   - name: data
@@ -102,7 +86,6 @@ volumes:
 volumeMounts:
   - name: data
     mountPath: /data
-
 nodeSelector: {}
 tolerations: []
 affinity: {}
