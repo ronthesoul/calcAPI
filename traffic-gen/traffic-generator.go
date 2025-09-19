@@ -6,8 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	rand "math/rand/v2" // Go 1.22+: no seeding needed
+	rand "math/rand/v2"
 	"net/http"
+	"os"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -15,12 +16,19 @@ import (
 )
 
 var (
-	baseURL = "http://localhost:8080"
+	baseURL = defaultBaseURL()
 	client  = &http.Client{Timeout: 5 * time.Second}
 )
 
 type tokenResp struct {
 	APIKey string `json:"API-Key"`
+}
+
+func defaultBaseURL() string {
+	if v := os.Getenv("TARGET_URL"); v != "" {
+		return v
+	}
+	return "http://localhost:8080"
 }
 
 func getToken(ctx context.Context) (string, error) {
