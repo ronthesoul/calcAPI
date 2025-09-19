@@ -1,25 +1,20 @@
 # Default values for calcapi.
 
 replicaCount: 1
-
 image:
   repository: m4gapower/calcapi
   pullPolicy: IfNotPresent
-  tag: ""                      # CI sets this; falls back to .Chart.AppVersion if blank
-
+  tag: "1.13.0" # CI sets this; falls back to .Chart.AppVersion if blank
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
-
 serviceAccount:
   create: true
   automount: true
   annotations: {}
   name: ""
-
 podAnnotations: {}
 podLabels: {}
-
 # Pod-level security context
 podSecurityContext:
   seccompProfile:
@@ -27,18 +22,14 @@ podSecurityContext:
   runAsUser: 1001
   runAsGroup: 1001
   runAsNonRoot: true
-
 # Container-level security context
 securityContext:
   allowPrivilegeEscalation: false
   privileged: false
-
 terminationGracePeriodSeconds: 600
-
 service:
   type: ClusterIP
   port: 8080
-
 ingress:
   enabled: false
   className: ""
@@ -49,28 +40,25 @@ ingress:
         - path: /
           pathType: ImplementationSpecific
   tls: []
-
 httpRoute:
   enabled: false
   annotations: {}
   parentRefs:
-  - name: gateway
-    sectionName: http
+    - name: gateway
+      sectionName: http
   hostnames:
-  - chart-example.local
+    - chart-example.local
   rules:
-  - matches:
-    - path:
-        type: PathPrefix
-        value: /headers
-
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /headers
 resources:
   limits:
     memory: "500Mi"
   requests:
     memory: "500Mi"
     cpu: "1"
-
 # Probes (numeric port as in your manifest)
 probes:
   port: 8080
@@ -78,16 +66,13 @@ probes:
     path: /healthz
   readiness:
     path: /readyz
-
 autoscaling:
   enabled: false
   minReplicas: 1
   maxReplicas: 100
   targetCPUUtilizationPercentage: 80
-
 volumes: []
 volumeMounts: []
-
 nodeSelector: {}
 tolerations: []
 affinity: {}
