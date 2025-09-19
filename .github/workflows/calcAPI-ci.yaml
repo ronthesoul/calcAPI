@@ -91,7 +91,6 @@ jobs:
           sha256sum artifacts/calcapi-linux-amd64 | tee artifacts/calcapi-linux-amd64.sha256
           "$NOTIFY" "Step - Early Build ✅ artifacts/calcapi-linux-amd64 ready" "$SLACK_WEBHOOK"
 
-
       - name: Test
         shell: bash
         run: |
@@ -162,7 +161,6 @@ jobs:
           echo "new_tag=$NEW_TAG" >> "$GITHUB_ENV"
           "$NOTIFY" "Step - Compute tag ✅ $BASE → $NEW_TAG" "$SLACK_WEBHOOK"
 
-    
       - name: Tag image with NEW_TAG
         shell: bash
         run: |
@@ -179,7 +177,6 @@ jobs:
           docker push "$IMAGE:${new_tag}"
           "$NOTIFY" "Step - Push image(s) ✅ $IMAGE:latest & $IMAGE:${new_tag}" "$SLACK_WEBHOOK"
 
-    
       - name: Locate calcapi deployment file
         id: dep
         shell: bash
@@ -208,14 +205,14 @@ jobs:
           "$NOTIFY" "Starting Step - Update Deployment ($DEPLOYFILE)" "$SLACK_WEBHOOK"
           yq -i '
             (select(.kind=="Deployment" and .metadata.name=="calcapi")
-             | .spec.template.spec.containers[] 
+             | .spec.template.spec.containers[]
              | select(.name=="calcapi")
              | .image) = env(IMAGE) + ":" + env(new_tag)
           ' "$DEPLOYFILE"
 
           yq -e '
             select(.kind=="Deployment" and .metadata.name=="calcapi")
-            | .spec.template.spec.containers[] 
+            | .spec.template.spec.containers[]
             | select(.name=="calcapi") | .image == env(IMAGE) + ":" + env(new_tag)
           ' "$DEPLOYFILE" >/dev/null \
           && "$NOTIFY" "Step - Update Deployment ✅ Success ($IMAGE:${new_tag})" "$SLACK_WEBHOOK" \
@@ -239,18 +236,6 @@ jobs:
             exit 1
           fi
 
-
-      - name: Upload calcapi binary artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: calcapi-binary-${{ env.new_tag || github.sha }}
-          path: |
-            artifacts/calcapi-linux-amd64
-            artifacts/calcapi-linux-amd64.sha256
-          if-no-files-found: error
-          retention-days: 7
-
-
       - name: Publish GitHub Release with binary
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
@@ -261,7 +246,6 @@ jobs:
           files: |
             artifacts/calcapi-linux-amd64
             artifacts/calcapi-linux-amd64.sha256
-
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
@@ -280,44 +264,56 @@ jobs:
         run: |
           set -euo pipefail
           "$NOTIFY" "📦 Starting Step - Helm chart build for ${NEW_TAG}" "$SLACK_WEBHOOK"
+
           command -v yq >/dev/null || {
             sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
             sudo chmod +x /usr/local/bin/yq
           }
+
           "$NOTIFY" "🔧 Updating Chart.yaml and values.yaml" "$SLACK_WEBHOOK"
           yq -i '.appVersion = strenv(NEW_TAG)' "$CHART_DIR/Chart.yaml"
+
           CURR_VER=$(yq -r '.version' "$CHART_DIR/Chart.yaml")
           IFS='.' read -r MAJ MIN PAT <<< "${CURR_VER:-0.1.0}"
           NEW_VER="${MAJ}.$((MIN+1)).0"
           yq -i ".version = \"${NEW_VER}\"" "$CHART_DIR/Chart.yaml"
+
           yq -i ".image.repository = strenv(IMAGE_REPO) | .image.tag = strenv(NEW_TAG)" "$CHART_DIR/values.yaml"
+
           "$NOTIFY" "🔍 Linting Helm chart" "$SLACK_WEBHOOK"
           helm lint "$CHART_DIR"
-          "$NOTIFY" "📦 Packaging Helm chart" "$SLACK_WEBHOOK"
-          mkdir -p artifacts
-          helm package "$CHART_DIR" -d artifacts
-          PKG_FILE=$(ls artifacts/*.tgz | head -n1)
+
+          # Package to a temp dir; push exactly the version we just set (no artifacts/ usage)
+          CHART_NAME=$(yq -r '.name' "$CHART_DIR/Chart.yaml")
+          CHART_VER=$(yq -r '.version' "$CHART_DIR/Chart.yaml")
+          PKG_DIR=$(mktemp -d)
+          helm package "$CHART_DIR" -d "$PKG_DIR"
+          PKG_FILE="$PKG_DIR/${CHART_NAME}-${CHART_VER}.tgz"
+          "$NOTIFY" "📦 Helm chart packaged: $(basename "$PKG_FILE")" "$SLACK_WEBHOOK"
+
           if [ -n "${GHCR_TOKEN:-}" ]; then
-            "$NOTIFY" "📤 Pushing Helm chart to OCI registry" "$SLACK_WEBHOOK"
             echo "$GHCR_TOKEN" | helm registry login ghcr.io -u "${OWNER}" --password-stdin
             helm push "$PKG_FILE" "oci://${OCI_REGISTRY}"
-            "$NOTIFY" "Step - Helm chart ✅ Pushed to oci://${OCI_REGISTRY}" "$SLACK_WEBHOOK"
+            "$NOTIFY" "Step - Helm chart ✅ Pushed oci://${OCI_REGISTRY}/${CHART_NAME}:${CHART_VER}" "$SLACK_WEBHOOK"
           else
-            "$NOTIFY" "ℹ️ Step - Helm chart packaged locally at $PKG_FILE (no push)" "$SLACK_WEBHOOK"
+            "$NOTIFY" "ℹ️ Step - Helm chart packaged (no GHCR_TOKEN; skipping push)" "$SLACK_WEBHOOK"
           fi
+
+          # export for commit message in next step
+          echo "chart_ver=$CHART_VER" >> "$GITHUB_ENV"
 
       - name: Commit & push chart bump
         shell: bash
         run: |
-          "$NOTIFY" "Starting Step - Commit Helm chart bump ${IMAGE}:${{ env.new_tag }}" "$SLACK_WEBHOOK"
+          "$NOTIFY" "Starting Step - Commit Helm chart bump ${IMAGE}:${{ env.new_tag }} (chart ${{ env.chart_ver }})" "$SLACK_WEBHOOK"
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
-          git add helm/calcapi/Chart.yaml helm/calcapi/values.yaml artifacts/*.tgz || true
+          git add helm/calcapi/Chart.yaml helm/calcapi/values.yaml
           if git diff --cached --quiet; then
             "$NOTIFY" "Step - Commit Helm chart ✅ No changes" "$SLACK_WEBHOOK"
             exit 0
           fi
-          if git commit -m "chore(ci): helm chart ${IMAGE}:${{ env.new_tag }} (chart ${NEW_VER})" && git push; then
+          if git commit -m "chore(ci): helm chart ${IMAGE}:${{ env.new_tag }} (chart ${{ env.chart_ver }})" && git push; then
             "$NOTIFY" "Step - Commit Helm chart ✅ Success" "$SLACK_WEBHOOK"
           else
             "$NOTIFY" "Step - Commit Helm chart ❌ Failed" "$SLACK_WEBHOOK"
