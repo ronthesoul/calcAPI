@@ -189,16 +189,6 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Upload calcapi artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: calcapi-binary-${{ env.new_tag }}
-          path: |
-            artifacts/calcapi-linux-amd64
-            artifacts/calcapi-linux-amd64.sha256
-          if-no-files-found: error
-          retention-days: 7
-
       - name: Locate calcapi deployment file
         id: dep
         shell: bash
