@@ -210,7 +210,6 @@ jobs:
         shell: bash
         run: |
           DEPLOYFILE="${{ steps.dep.outputs.file }}"
-          HELMFILE="helm/calcapi/values.yaml"
           "$NOTIFY" "Starting Step - Update Deployment ($DEPLOYFILE)" "$SLACK_WEBHOOK"
           yq -i '
             (select(.kind=="Deployment" and .metadata.name=="calcapi")
@@ -219,18 +218,7 @@ jobs:
              | .image) = env(IMAGE) + ":" + env(new_tag)
           ' "$DEPLOYFILE"
 
-          yq -i '
-            .image = (.image // {}) |
-            .image.repository = (env(IMAGE) | sub(":(?=[^/]+$)"; "")) |
-            .image.tag        = env(new_tag) |
-            .image.pullPolicy = (.image.pullPolicy // "IfNotPresent")
-          ' "$HELMFILE"
-
-          yq -e '
-            (.image.repository == (env(IMAGE) | sub(":(?=[^/]+$)"; "")))
-            and (.image.tag == env(new_tag))
-          ' "$HELMFILE" >/dev/null
-
+          # verify
           yq -e '
             select(.kind=="Deployment" and .metadata.name=="calcapi")
             | .spec.template.spec.containers[]
@@ -245,7 +233,7 @@ jobs:
           "$NOTIFY" "Starting Step - Commit & push repo changes" "$SLACK_WEBHOOK"
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
-          git add "${{ steps.dep.outputs.file }}" helm/calcapi/values.yaml
+          git add "${{ steps.dep.outputs.file }}" 
           if git diff --cached --quiet; then
             "$NOTIFY" "Step - Commit & push ✅ No changes to commit" "$SLACK_WEBHOOK"
             exit 0
@@ -256,6 +244,80 @@ jobs:
             "$NOTIFY" "Step - Commit & push ❌ Failed" "$SLACK_WEBHOOK"
             exit 1
           fi
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4
+
+      - name: Build & publish Helm chart for this image tag
+        env:
+          CHART_DIR: helm/calcapi
+          IMAGE_REPO: ${{ env.IMAGE }}
+          NEW_TAG: ${{ env.new_tag }}
+          OWNER: ${{ github.repository_owner }}
+          OCI_REGISTRY: ghcr.io/${{ github.repository_owner }}/charts
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$NOTIFY" "📦 Starting Step - Helm chart build for ${NEW_TAG}" "$SLACK_WEBHOOK"
+
+          # Ensure yq exists
+          command -v yq >/dev/null || {
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          }
+
+          "$NOTIFY" "🔧 Updating Chart.yaml and values.yaml" "$SLACK_WEBHOOK"
+          yq -i '.appVersion = strenv(NEW_TAG)' "$CHART_DIR/Chart.yaml"
+
+          CURR_VER=$(yq -r '.version' "$CHART_DIR/Chart.yaml")
+          IFS='.' read -r MAJ MIN PAT <<< "${CURR_VER:-0.1.0}"
+          NEW_VER="${MAJ}.$((MIN+1)).0"
+          yq -i ".version = \"${NEW_VER}\"" "$CHART_DIR/Chart.yaml"
+
+          yq -i ".image.repository = strenv(IMAGE_REPO) | .image.tag = strenv(NEW_TAG)" "$CHART_DIR/values.yaml"
+
+          "$NOTIFY" "🔍 Linting Helm chart" "$SLACK_WEBHOOK"
+          helm lint "$CHART_DIR"
+
+          "$NOTIFY" "📦 Packaging Helm chart" "$SLACK_WEBHOOK"
+          mkdir -p artifacts
+          helm package "$CHART_DIR" -d artifacts
+
+          PKG_FILE=$(ls artifacts/*.tgz | head -n1)
+
+          if [ -n "${GHCR_TOKEN:-}" ]; then
+            "$NOTIFY" "📤 Pushing Helm chart to OCI registry" "$SLACK_WEBHOOK"
+            echo "$GHCR_TOKEN" | helm registry login ghcr.io -u "${OWNER}" --password-stdin
+            helm push "$PKG_FILE" "oci://${OCI_REGISTRY}"
+            "$NOTIFY" "Step - Helm chart ✅ Pushed to oci://${OCI_REGISTRY}" "$SLACK_WEBHOOK"
+          else
+            "$NOTIFY" "ℹ️ Step - Helm chart packaged locally at $PKG_FILE (no push)" "$SLACK_WEBHOOK"
+          fi
+
+      - name: Commit & push chart bump
+        shell: bash
+        run: |
+          "$NOTIFY" "Starting Step - Commit Helm chart bump ${IMAGE}:${{ env.new_tag }}" "$SLACK_WEBHOOK"
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git add helm/calcapi/Chart.yaml helm/calcapi/values.yaml artifacts/*.tgz || true
+          if git diff --cached --quiet; then
+            "$NOTIFY" "Step - Commit Helm chart ✅ No changes" "$SLACK_WEBHOOK"
+            exit 0
+          fi
+          if git commit -m "chore(ci): helm chart ${IMAGE}:${{ env.new_tag }} (chart ${NEW_VER})" && git push; then
+            "$NOTIFY" "Step - Commit Helm chart ✅ Success" "$SLACK_WEBHOOK"
+          else
+            "$NOTIFY" "Step - Commit Helm chart ❌ Failed" "$SLACK_WEBHOOK"
+            exit 1
+          fi
+
+
+
+
 
       - name: Show changed files (logs) + notify
         shell: bash
