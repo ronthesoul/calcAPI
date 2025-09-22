@@ -1,4 +1,4 @@
-#               💀 calcAPI – Skeleton Calculator API
+<h1 align="center">💀 calcAPI – Skeleton Calculator API</h1>
 
 <p align="center">
   <img src="src/readme_image.png" alt="calcAPI Logo" width="300" />
