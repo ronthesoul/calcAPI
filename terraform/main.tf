@@ -4,29 +4,8 @@ terraform {
   }
 }
 
-variable "image" {
-  type    = string
-  default = "m4gapower/calcapi:1.18.0"
-}
-
-variable "container_name" {
-  type    = string
-  default = "calcapi"
-}
-
-variable "container_port" {
-  type    = number
-  default = 8080
-}
-
-variable "host_port" {
-  type    = number
-  default = 8080
-}
 
 provider "docker" {}
-
-
 
 resource "docker_network" "app" {
   name = "app_net"
@@ -50,6 +29,5 @@ networks_advanced { name = docker_network.app.name }
     external = var.host_port
     protocol = "tcp"
   }
-
 
 }
