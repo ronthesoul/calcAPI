@@ -1,7 +1,7 @@
-# calcAPI
+# 💀 calcAPI – Skeleton Calculator API
 
 <p align="center">
-  <img src="src/readme_image.png" alt="calcAPI Logo" width="250" />
+  <img src="src/readme_image.png" alt="calcAPI Logo" width="300" />
 </p>
 
 <p align="center">
@@ -17,13 +17,25 @@
 
 ---
 
-## 📂 Project Sections
+## 📂 Project Structure
 
-- [📌 Task Summary](./task.md)
-- [⚙️ Terraform – Local Docker Deployment](./terraform/README.md)
-- [📈 Traffic Generator](./traffic-gen/README.md)
-- [📊 Prometheus + Grafana](./prometheus/README.md)
-- [📦 Helm Chart](./helm/README.md)
+```
+calcAPI/
+├── main.go
+├── go.mod
+├── go.sum
+├── src/
+│   └── readme_image.png
+├── terraform/
+│   └── README.md
+├── traffic-gen/
+│   └── README.md
+├── prometheus/
+│   └── README.md
+├── helm/
+│   └── README.md
+└── task.md
+```
 
 ---
 
@@ -47,62 +59,48 @@ http://localhost:8080
 
 All endpoints (except `/health`) require an API key.
 
-Add it to the request header:
-
+Generate a key:
+```bash
+curl http://localhost:8080/token
 ```
-X-API-Key: <your_api_key>
-```
 
-Generate a key via:
-
+Add it to your requests:
 ```
-GET /token
+-H "X-API-Key: <your_api_key>"
 ```
 
 ---
 
-## 📡 Endpoints
+## 📡 Endpoints (with curl)
 
 ### Health Check
-```
-GET /health
-```
-Response:
-```json
-{"status":"ok"}
+```bash
+curl -H "X-API-Key: <your_api_key>" http://localhost:8080/health
 ```
 
 ### Generate Token
-```
-GET /token
-```
-Response:
-```json
-{"token":"<generated_api_key>"}
+```bash
+curl http://localhost:8080/token
 ```
 
 ### Addition
-```
-GET /add/:a/:b
-```
-Response:
-```json
-{"a":2,"b":4,"op":"add","result":6}
+```bash
+curl -H "X-API-Key: <your_api_key>" http://localhost:8080/add/2/4
 ```
 
 ### Subtraction
-```
-GET /sub/:a/:b
+```bash
+curl -H "X-API-Key: <your_api_key>" http://localhost:8080/sub/10/3
 ```
 
 ### Multiplication
-```
-GET /multiply/:a/:b
+```bash
+curl -H "X-API-Key: <your_api_key>" http://localhost:8080/multiply/3/5
 ```
 
 ### Division
-```
-GET /divide/:a/:b
+```bash
+curl -H "X-API-Key: <your_api_key>" http://localhost:8080/divide/10/2
 ```
 
 ---
@@ -115,6 +113,8 @@ GET /divide/:a/:b
 
 ---
 
-## 📜 License
+## 👤 Author
 
-This project is licensed under the MIT License.
+**Ron (ronthesoul)**  
+[GitHub Profile](https://github.com/ronthesoul)
+
