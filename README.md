@@ -1,4 +1,4 @@
-# 💀 calcAPI – Skeleton Calculator API
+#               💀 calcAPI – Skeleton Calculator API
 
 <p align="center">
   <img src="src/readme_image.png" alt="calcAPI Logo" width="300" />
@@ -18,6 +18,12 @@
 ---
 
 ## 📂 Project Structure
+
+- [📌 Task Summary](./task.md)
+- [⚙️ Terraform – Local Docker Deployment](./terraform/README.md)
+- [📈 Traffic Generator](./traffic-gen/README.md)
+- [📊 Prometheus + Grafana](./prometheus/README.md)
+- [📦 Helm Chart](./helm/README.md)
 
 ```
 calcAPI/
