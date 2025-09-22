@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>A lightweight arithmetic API built with <a href="https://github.com/gin-gonic/gin">Gin</a></b><br/>
-  Featuring API key authentication, structured logging with <a href="https://github.com/uber-go/zap">Zap</a>, and secure HTTP headers.
+  Featuring API key authentication, structured logging with <a href="https://github.com/uber-go/zap">Zap</a>, middleware, Prometheus and Grafana monitoring, All kinds of deployments (Helm, ArgoCD, Terraform, Docker compose), Traffic Gen, A fully functional CICD.
 </p>
 
 <p align="center">
