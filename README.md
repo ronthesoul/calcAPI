@@ -1,9 +1,22 @@
 # calcAPI
 
+<img src="src/readme_image.png" alt="AWS Permissions Example" width="800">
+
+
 A simple arithmetic API built with [Gin](https://github.com/gin-gonic/gin).  
 Supports API key authentication, structured logging with [zap](https://github.com/uber-go/zap), and security headers.
 
 ---
+
+
+## 📂 Project Sections
+
+- [Task Summery](./task.md)
+- [Terraform – Local Docker Deployment](./terraform/README.md)
+- [Traffic Generator](./traffic-gen/README.md)
+- [Prometheus + Grafana](./prometheus/README.md)
+- [Helm Chart](./helm/README.md)
+
 
 ## Getting Started
 

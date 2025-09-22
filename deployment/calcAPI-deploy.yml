@@ -17,6 +17,10 @@ spec:
         app.kubernetes.io/component: web
         app.kubernetes.io/part-of: calcapi-suite
         app.kubernetes.io/managed-by: Helm
+      annotations:
+        argocd-image-updater.argoproj.io/image-list: calcapi=m4gapower/calcapi
+        argocd-image-updater.argoproj.io/calcapi.update-strategy: latest
+        argocd-image-updater.argoproj.io/calcapi.allow-tags: regexp:^\\d+\\.\\d+\\.\\d+$
     spec:
       terminationGracePeriodSeconds: 600
       securityContext:
