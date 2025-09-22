@@ -81,7 +81,7 @@ Add it to your requests:
 
 ### Health Check
 ```bash
-curl -H "X-API-Key: <your_api_key>" http://localhost:8080/health
+curl  http://localhost:8080/healthz
 ```
 
 ### Generate Token
