@@ -1,169 +1,120 @@
 # calcAPI
 
-<img src="src/readme_image.png" alt="AWS Permissions Example" width="800">
+<p align="center">
+  <img src="src/readme_image.png" alt="calcAPI Logo" width="250" />
+</p>
 
+<p align="center">
+  <b>A lightweight arithmetic API built with <a href="https://github.com/gin-gonic/gin">Gin</a></b><br/>
+  Featuring API key authentication, structured logging with <a href="https://github.com/uber-go/zap">Zap</a>, and secure HTTP headers.
+</p>
 
-A simple arithmetic API built with [Gin](https://github.com/gin-gonic/gin).  
-Supports API key authentication, structured logging with [zap](https://github.com/uber-go/zap), and security headers.
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go&logoColor=white" />
+  <img src="https://img.shields.io/badge/Framework-Gin-green?logo=go" />
+  <img src="https://img.shields.io/badge/License-MIT-blue" />
+</p>
 
 ---
 
-
 ## 📂 Project Sections
 
-- [Task Summery](./task.md)
-- [Terraform – Local Docker Deployment](./terraform/README.md)
-- [Traffic Generator](./traffic-gen/README.md)
-- [Prometheus + Grafana](./prometheus/README.md)
-- [Helm Chart](./helm/README.md)
+- [📌 Task Summary](./task.md)
+- [⚙️ Terraform – Local Docker Deployment](./terraform/README.md)
+- [📈 Traffic Generator](./traffic-gen/README.md)
+- [📊 Prometheus + Grafana](./prometheus/README.md)
+- [📦 Helm Chart](./helm/README.md)
 
+---
 
-## Getting Started
+## 🚀 Getting Started
 
-Run the server:
+Run the server locally:
 
 ```bash
 go run main.go
 ```
 
-By default the server listens on:  
+The server starts on:
+
 ```
 http://localhost:8080
 ```
 
 ---
 
-## Authentication
+## 🔑 Authentication
 
-All endpoints (except `/health`) require an API key.  
-Pass it in the request headers:
+All endpoints (except `/health`) require an API key.
+
+Add it to the request header:
 
 ```
 X-API-Key: <your_api_key>
 ```
 
-You can generate a new API key using the `/token` endpoint.
-
----
-
-## Endpoints
-
-### 1. Health Check
-Check if the server is alive.
-
-```
-GET /health
-```
-
-**Example:**
-```bash
-curl http://localhost:8080/health
-```
-
-**Response:**
-```json
-{"status":"ok"}
-```
-
----
-
-### 2. Generate Token
-Generates a new API key.
+Generate a key via:
 
 ```
 GET /token
 ```
 
-**Example:**
-```bash
-curl http://localhost:8080/token
+---
+
+## 📡 Endpoints
+
+### Health Check
+```
+GET /health
+```
+Response:
+```json
+{"status":"ok"}
 ```
 
-**Response:**
+### Generate Token
+```
+GET /token
+```
+Response:
 ```json
 {"token":"<generated_api_key>"}
 ```
 
----
-
-### 3. Addition
-Add two integers.
-
+### Addition
 ```
 GET /add/:a/:b
 ```
-
-**Example:**
-```bash
-curl -H "X-API-Key: <your_api_key>" http://localhost:8080/add/2/4
-```
-
-**Response:**
+Response:
 ```json
 {"a":2,"b":4,"op":"add","result":6}
 ```
 
----
-
-### 4. Subtraction
-Subtract the second integer from the first.
-
+### Subtraction
 ```
 GET /sub/:a/:b
 ```
 
-**Example:**
-```bash
-curl -H "X-API-Key: <your_api_key>" http://localhost:8080/sub/10/3
-```
-
-**Response:**
-```json
-{"a":10,"b":3,"op":"sub","result":7}
-```
-
----
-
-### 5. Multiplication
-Multiply two integers.
-
+### Multiplication
 ```
 GET /multiply/:a/:b
 ```
 
-**Example:**
-```bash
-curl -H "X-API-Key: <your_api_key>" http://localhost:8080/multiply/3/5
-```
-
-**Response:**
-```json
-{"a":3,"b":5,"op":"multiply","result":15}
-```
-
----
-
-### 6. Division
-Divide the first integer by the second.
-
+### Division
 ```
 GET /divide/:a/:b
 ```
 
-**Example:**
-```bash
-curl -H "X-API-Key: <your_api_key>" http://localhost:8080/divide/10/2
-```
+---
 
-**Response:**
-```json
-{"a":10,"b":2,"op":"divide","result":5}
-```
+## 📝 Notes
+
+- Inputs must be integers (`a`, `b`).
+- Division by zero returns an error.
+- Invalid inputs return `400 Bad Request`.
 
 ---
 
-## Notes
-- All operations expect integer values for `a` and `b`.  
-- If you provide invalid inputs, the API will return a `400 Bad Request`.  
-- Division by zero will return an error response.
+## 📜 License
 
+This project is licensed under the MIT License.
