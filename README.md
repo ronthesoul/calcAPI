@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>A lightweight arithmetic API built with <a href="https://github.com/gin-gonic/gin">Gin</a></b><br/>
-  Featuring API key authentication, structured logging with <a href="https://github.com/uber-go/zap">Zap</a>, middleware, Prometheus and Grafana monitoring, All kinds of deployments (Helm, ArgoCD, Terraform, Docker compose), Traffic Gen, A fully functional CICD.
+  Featuring API key authentication, structured logging with <a href="https://github.com/uber-go/zap">Zap</a>, middleware, Prometheus and Grafana monitoring, All kinds of deployments (Helm, ArgoCD, Terraform, Docker compose), Traffic Gen, A fully functional CI/CD.
 </p>
 
 <p align="center">
@@ -27,20 +27,59 @@
 
 ```
 calcAPI/
-├── main.go
+├── Dockerfile
+├── deployment
+│   ├── README.md
+│   ├── app.yaml
+│   └── calcAPI-deploy.yml
+├── docker-compose
+│   └── docker-compose.yml
 ├── go.mod
 ├── go.sum
-├── src/
-│   └── readme_image.png
-├── terraform/
-│   └── README.md
-├── traffic-gen/
-│   └── README.md
-├── prometheus/
-│   └── README.md
-├── helm/
-│   └── README.md
-└── task.md
+├── helm
+│   ├── README.md
+│   └── calcapi
+│       ├── Chart.yaml
+│       ├── templates
+│       │   ├── _helpers.tpl
+│       │   ├── deployment.yaml
+│       │   ├── service.yaml
+│       └── values.yaml
+├── logging
+│   └── logger.go
+├── main.go
+├── middleware
+│   ├── auth.go
+│   ├── cors.go
+│   ├── headers.go
+│   ├── metrics.go
+│   ├── ratelimiter.go
+│   └── zap.go
+├── prometheus
+│   ├── README.md
+│   ├── docker-compose.yml
+│   └── prometheus.yml
+├── routes
+│   ├── add.go
+│   ├── apigen.go
+│   ├── common.go
+│   ├── divide.go
+│   ├── health.go
+│   ├── multiply.go
+│   ├── ready.go
+│   └── subtract.go
+├── storage
+│   └── storagesetup.go
+├── task.md
+├── terraform
+│   ├── README.md
+│   ├── main.tf
+│   └── variables.tf
+└── traffic-gen
+    ├── Dockerfile
+    ├── README.md
+    └── traffic-generator.go
+
 ```
 
 ---

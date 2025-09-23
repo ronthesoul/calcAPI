@@ -63,7 +63,7 @@ Implemented using **GitHub Actions**:
 - **Helm Chart** → packaged for Kubernetes deployments.  
 - **Docker Compose** → runs both API and traffic generator together.  
 - **Prometheus + Grafana Compose Setup** → observability stack for metrics.  
-- **Terraform (AWS Provider)** → provision an EC2 instance running calcAPI.
+- **Terraform** → provision the app container with terraform.
 
 ---
 
