@@ -86,6 +86,14 @@ calcAPI/
 
 ## 🚀 Getting Started
 
+Download the project from the release page: [Releases](https://github.com/ronthesoul/calcAPI/releases)
+
+Install it via commandline:
+```bash
+curl -L -o calcapi-linux-amd64 \
+  https://github.com/ronthesoul/calcAPI/releases/download/v1.18.0/calcapi-linux-amd64
+```
+
 Run the server locally:
 
 ```bash
